@@ -1,4 +1,4 @@
-# Remove-Nahimic
+# Remove Nahimic
 
 A PowerShell script for the **complete, permanent removal** of Nahimic, A-Volute, Sonic Studio, and A-Studio from Windows — including their tendency to reinstall themselves silently through Windows Update and OEM software.
 
