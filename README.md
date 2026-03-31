@@ -1,6 +1,6 @@
 # Remove Nahimic
 
-A PowerShell script for the **complete, permanent removal** of Nahimic, A-Volute, Sonic Studio, and A-Studio from Windows — including their tendency to reinstall themselves silently through Windows Update and OEM software.
+A PowerShell script for the **complete, permanent removal** of Nahimic, A-Volute, Sonic Studio, and A-Studio from Windows, including their tendency to reinstall themselves silently through Windows Update and OEM software.
 
 Available in **English** (`Remove_Nahimic_EN.ps1`) and **Italian** (`Rimuovi_Nahimic_ITA.ps1`). Both files are identical in logic.
 
@@ -12,10 +12,10 @@ Nahimic (developed by A-Volute) is audio enhancement software bundled by OEMs su
 
 Beyond the installation and persistence issues described below, **Nahimic is simply bad software that degrades audio quality**. It injects Audio Processing Object (APO) layers directly into the Windows WASAPI stack to apply its "enhancements", which in practice means:
 
-- **Crackling, popping, and stuttering audio** — a well-documented side effect of its APO interfering with the audio pipeline, especially noticeable under load or after sleep/wake cycles
-- **Distorted sound** — the so-called enhancements (virtual surround, bass boost, equalization) are applied system-wide without asking, making everything sound worse than the raw output from a decent audio driver
-- **Conflicts with other audio software** — if you run any DAW, virtual audio cable, or other APO-based tool (Equalizer APO, Peace, DTS Sound Unbound, etc.), Nahimic will fight with it, causing glitches or outright audio failure
-- **Increased audio latency** — additional processing stages in the signal chain add latency, which matters for gaming and any real-time audio work
+- **Crackling, popping, and stuttering audio**, a well-documented side effect of its APO interfering with the audio pipeline, especially noticeable under load or after sleep/wake cycles
+- **Distorted sound**, the so-called enhancements (virtual surround, bass boost, equalization) are applied system-wide without asking, making everything sound worse than the raw output from a decent audio driver
+- **Conflicts with other audio software**, if you run any DAW, virtual audio cable, or other APO-based tool (Equalizer APO, Peace, DTS Sound Unbound, etc.), Nahimic will fight with it, causing glitches or outright audio failure
+- **Increased audio latency**, additional processing stages in the signal chain add latency, which matters for gaming and any real-time audio work
 
 There is no reason to have this software on your system unless an OEM forced it there.
 
@@ -44,7 +44,7 @@ Simply deleting files or removing it from Programs and Features is not enough. T
 | 5 | Removes PnP devices via `pnputil /remove-device` |
 | 6 | Deletes known installation folders; scans `System32` and `SysWOW64` for leftover files |
 | 7 | Removes matching entries from Task Scheduler |
-| 8 | Hides pending Windows Update entries via the WUA COM API (`Microsoft.Update.Session`) — same effect as the "Hide" button in Windows Update MiniTool, but fully automated |
+| 8 | Hides pending Windows Update entries via the WUA COM API (`Microsoft.Update.Session`), same effect as the "Hide" button in Windows Update MiniTool, but fully automated |
 | 9 | Blacklists Hardware IDs under `HKLM\SOFTWARE\Policies\Microsoft\Windows\DeviceInstall\Restrictions\DenyDeviceIDs`, including IDs detected live from PnP devices and hidden WU entries |
 
 ---
@@ -91,14 +91,14 @@ The matching pattern is a single regex variable at the top of the script. You ca
 
 ## If it comes back
 
-The Hardware ID blacklist (step 9) is the primary permanent block — it prevents Windows PnP and Windows Update from ever reinstalling the driver, including after feature updates.
+The Hardware ID blacklist (step 9) is the primary permanent block, it prevents Windows PnP and Windows Update from ever reinstalling the driver, including after feature updates.
 
 If the software somehow returns, check:
 - Whether MSI Dragon Center / ASUS Armoury Crate / GeForce Experience was reinstalled (they are known reinstallers)
 - Whether the WU entries were successfully hidden (verify in Windows Update MiniTool under the "Hidden" tab)
 - Whether the `DenyDeviceIDs` registry key survived a Windows feature update
 
-Running the script again is safe — it skips anything already absent and will not add duplicate blacklist entries.
+Running the script again is safe, it skips anything already absent and will not add duplicate blacklist entries.
 
 ---
 
