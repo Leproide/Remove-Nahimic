@@ -12,6 +12,7 @@ Nahimic (developed by A-Volute) is audio enhancement software bundled by OEMs su
 
 Beyond the installation and persistence issues described below, **Nahimic is simply bad software that degrades audio quality**. It injects Audio Processing Object (APO) layers directly into the Windows WASAPI stack to apply its "enhancements", which in practice means:
 
+- **UI freezes, system-wide stuttering, input lag**, and general interface unresponsiveness caused by driver-level interference and audio stack contention, often noticeable during load spikes or after sleep/wake cycles
 - **Crackling, popping, and stuttering audio**, a well-documented side effect of its APO interfering with the audio pipeline, especially noticeable under load or after sleep/wake cycles
 - **Distorted sound**, the so-called enhancements (virtual surround, bass boost, equalization) are applied system-wide without asking, making everything sound worse than the raw output from a decent audio driver
 - **Conflicts with other audio software**, if you run any DAW, virtual audio cable, or other APO-based tool (Equalizer APO, Peace, DTS Sound Unbound, etc.), Nahimic will fight with it, causing glitches or outright audio failure
