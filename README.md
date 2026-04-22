@@ -125,7 +125,6 @@ Windows feature updates (annual releases like 24H2, 25H2) can reset keys under `
 - **Nahimic** (all versions)
 - **A-Volute** (the company behind Nahimic; SoftwareComponent and MEDIA update types)
 - **ASUS Sonic Studio** / **Sonic Suite**
-- **ASUS A-Studio**
 - **NhNotifSys** (Nahimic notification tray component)
 - **NahimicAPO** (Audio Processing Object component)
 - MSI Dragon Center / One Dragon Center bundled reinstallers
