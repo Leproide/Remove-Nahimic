@@ -1,5 +1,8 @@
 #Requires -RunAsAdministrator
 <#
+Author: Leprechaun
+Repo: https://github.com/Leproide/Remove-Nahimic/
+
 .SYNOPSIS
     Complete removal of Nahimic / A-Volute / Sonic Studio / A-Studio and
     prevention of reinstallation via Windows Update.
@@ -8,13 +11,14 @@
     - Stops and removes services
     - Kills related processes
     - Deletes registry keys and registered APOs
-    - Deep APO cleanup via CLSID -> InprocServer32 resolution
+    - Direct APO cleanup (SS3Config + FxProperties) without relying on value types
     - Removes drivers from the Driver Store (pnputil)
     - Removes PnP devices
-    - Deletes leftover files and folders
+    - Deletes leftover files and folders (takeown + ACL deny fallback for locked files)
     - Removes scheduled tasks
     - Hides pending Windows Update entries (WUA COM API)
     - Blacklists Hardware IDs to block future reinstallations
+    - Creates NahimicPolicyGuard scheduled task to survive Windows feature updates
 .NOTES
     Requires administrator privileges.
     A reboot prompt is shown at the end.
@@ -350,27 +354,42 @@ $paths = @(
     "$env:ProgramData\ASUS\SonicStudio"
 )
 
-foreach ($p in $paths) {
-    if (Test-Path $p) {
-        Remove-Item -Path $p -Recurse -Force
-        Write-OK "Removed: $p"
-    } else {
-        Write-Skipped $p
+# Helper: take ownership, grant Administrators full control, then delete.
+# If deletion still fails (file locked), applies Deny-FullControl ACL as fallback
+# so the file cannot be executed even if it survives.
+function Remove-Forced {
+    param([string]$Path)
+    if (-not (Test-Path $Path)) { Write-Skipped $Path; return }
+    & takeown /f $Path /r /a /d y 2>&1 | Out-Null
+    & icacls $Path /grant "Administrators:F" /t 2>&1 | Out-Null
+    try {
+        Remove-Item -Path $Path -Recurse -Force -ErrorAction Stop
+        Write-OK "Removed: $Path"
+    } catch {
+        Write-Warn "Could not delete (locked?) — applying ACL deny: $Path"
+        try {
+            $acl = Get-Acl $Path
+            $deny = New-Object System.Security.AccessControl.FileSystemAccessRule(
+                'Everyone', 'FullControl', 'Deny')
+            $denySystem = New-Object System.Security.AccessControl.FileSystemAccessRule(
+                'SYSTEM', 'FullControl', 'Deny')
+            $acl.SetAccessRule($deny)
+            $acl.SetAccessRule($denySystem)
+            Set-Acl $Path $acl
+            Write-OK "ACL deny applied (file inert): $Path"
+        } catch {
+            Write-Warn "ACL deny also failed: $Path — $_"
+        }
     }
 }
+
+foreach ($p in $paths) { Remove-Forced $p }
 
 Write-Host "    Scanning for leftovers in System32 / SysWOW64..." -ForegroundColor DarkGray
 foreach ($dir in @("$env:SystemRoot\System32", "$env:SystemRoot\SysWOW64")) {
     Get-ChildItem -Path $dir -Recurse -ErrorAction SilentlyContinue |
         Where-Object { $_.Name -match $TARGET } |
-        ForEach-Object {
-            try {
-                Remove-Item -Path $_.FullName -Force -Recurse
-                Write-OK "Leftover removed: $($_.FullName)"
-            } catch {
-                Write-Warn "Could not remove (file in use?): $($_.FullName)"
-            }
-        }
+        ForEach-Object { Remove-Forced $_.FullName }
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -491,7 +510,67 @@ foreach ($hwId in $allHwIds) {
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 10. Summary
+# 10. Scheduled task: NahimicPolicyGuard
+#     Re-applies the HW ID blacklist at every startup as SYSTEM.
+#     Protects against Windows feature updates that can reset Group Policy
+#     registry keys under HKLM\SOFTWARE\Policies\...
+# ─────────────────────────────────────────────────────────────────────────────
+Write-Step "Creating NahimicPolicyGuard scheduled task"
+
+$guardTaskName = 'NahimicPolicyGuard'
+
+# Remove stale version if present (idempotent re-run)
+Unregister-ScheduledTask -TaskName $guardTaskName -Confirm:$false -ErrorAction SilentlyContinue
+
+$guardScript = @'
+$hwIdRegPath  = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\DeviceInstall\Restrictions'
+$denyListPath = "$hwIdRegPath\DenyDeviceIDs"
+if (-not (Test-Path $hwIdRegPath)) { New-Item -Path $hwIdRegPath -Force | Out-Null }
+Set-ItemProperty -Path $hwIdRegPath -Name 'DenyDeviceIDs'            -Value 1 -Type DWord -Force
+Set-ItemProperty -Path $hwIdRegPath -Name 'DenyDeviceIDsRetroactive' -Value 1 -Type DWord -Force
+if (-not (Test-Path $denyListPath)) { New-Item -Path $denyListPath -Force | Out-Null }
+$ids = @(
+    'SWC\VEN_103C&AID_NAHIMIC', 'SWC\VEN_1462&AID_NAHIMIC',
+    'SWC\VEN_10DE&AID_NAHIMIC', 'SWC\VEN_1043&AID_NAHIMIC',
+    'ROOT\NAHIMIC_MIRRORING',   'ROOT\NahimicBTLink',
+    'ROOT\Nahimic_Mirroring',   'ROOT\NahimicXVAD',
+    'SWC\VEN_1043&AID_SONICSTUDIO', 'ROOT\SONICSTUDIO', 'ROOT\ASTUDIO'
+)
+$existing = @{}
+(Get-Item -Path $denyListPath -ErrorAction SilentlyContinue).Property | ForEach-Object {
+    $v = Get-ItemPropertyValue -Path $denyListPath -Name $_ -ErrorAction SilentlyContinue
+    if ($v) { $existing[$v] = $true }
+}
+$i = if ($existing.Count -gt 0) { $existing.Count + 1 } else { 1 }
+foreach ($id in $ids) {
+    if (-not $existing.ContainsKey($id)) {
+        Set-ItemProperty -Path $denyListPath -Name "$i" -Value $id -Type String -Force
+        $i++; $existing[$id] = $true
+    }
+}
+'@
+
+$encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($guardScript))
+
+$action    = New-ScheduledTaskAction -Execute 'powershell.exe' `
+                 -Argument "-NonInteractive -NoProfile -WindowStyle Hidden -EncodedCommand $encoded"
+$trigger   = New-ScheduledTaskTrigger -AtStartup
+$principal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
+$settings  = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Minutes 5) `
+                 -MultipleInstances IgnoreNew
+
+try {
+    Register-ScheduledTask -TaskName $guardTaskName -Action $action -Trigger $trigger `
+        -Principal $principal -Settings $settings -Force `
+        -Description 'Re-applies Nahimic HW ID blacklist at startup. Survives Windows feature updates.' `
+        | Out-Null
+    Write-OK "Task '$guardTaskName' created (runs at startup as SYSTEM)"
+} catch {
+    Write-Warn "Could not create scheduled task: $_"
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 11. Summary
 # ─────────────────────────────────────────────────────────────────────────────
 $line = "─" * 62
 Write-Host "`n$line" -ForegroundColor DarkGray
@@ -505,10 +584,11 @@ Write-Host "   - Audio class registry backed up to Desktop" -ForegroundColor Whi
 Write-Host "   - APO cleanup: SS3Config subkeys + FxProperties deleted directly" -ForegroundColor White
 Write-Host "   - Drivers removed from Driver Store (pnputil)" -ForegroundColor White
 Write-Host "   - PnP devices removed" -ForegroundColor White
-Write-Host "   - Leftover files and folders deleted" -ForegroundColor White
+Write-Host "   - Leftover files deleted (takeown + ACL deny fallback)" -ForegroundColor White
 Write-Host "   - Scheduled tasks removed" -ForegroundColor White
 Write-Host "   - Windows Update entries hidden (WUA COM API)" -ForegroundColor White
 Write-Host "   - Hardware IDs blacklisted (permanent block)" -ForegroundColor White
+Write-Host "   - NahimicPolicyGuard task created (survives feature updates)" -ForegroundColor White
 Write-Host "$line" -ForegroundColor DarkGray
 
 $restart = Read-Host "`nRestart now? (y/N)"
