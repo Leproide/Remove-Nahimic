@@ -89,10 +89,11 @@ Output is grouped by category and sorted, with a total item count.
 | 3b | APO cleanup — see details below |
 | 4 | Removes drivers from the Windows Driver Store via `pnputil /delete-driver /uninstall /force` |
 | 5 | Removes PnP devices via `pnputil /remove-device` |
-| 6 | Deletes known installation folders; scans `System32` and `SysWOW64` for leftover files |
+| 6 | Deletes known installation folders; scans `System32` and `SysWOW64` for leftover files. Uses `takeown` + `icacls` to take ownership before deletion. If a file is locked and cannot be deleted, applies a `Deny FullControl` ACL to `Everyone` and `SYSTEM` as fallback — the file survives physically but cannot be loaded or executed |
 | 7 | Removes matching entries from Task Scheduler |
 | 8 | Hides pending Windows Update entries via the WUA COM API (`Microsoft.Update.Session`), same effect as the "Hide" button in Windows Update MiniTool, but fully automated |
 | 9 | Blacklists Hardware IDs under `HKLM\SOFTWARE\Policies\Microsoft\Windows\DeviceInstall\Restrictions\DenyDeviceIDs`, including IDs detected live from PnP devices and hidden WU entries |
+| 10 | Creates `NahimicPolicyGuard` scheduled task — runs at every startup as SYSTEM and re-applies the HW ID blacklist. Protects against Windows feature updates (24H2, 25H2, etc.) that can silently reset Group Policy registry keys under `HKLM\SOFTWARE\Policies\...`, which would otherwise allow Nahimic to reinstall itself undetected |
 
 ### APO cleanup (step 3b)
 
@@ -106,6 +107,16 @@ The script solves this differently:
 - The Windows Audio services (`audiosrv`, `AudioEndpointBuilder`) are stopped before the cleanup and restarted after, so the keys are not held open by the audio engine during deletion.
 - If `Remove-Item` fails due to ACL restrictions, the script falls back to `reg.exe delete /f`.
 - A `.reg` backup of the entire audio device class is exported to the Desktop before any modification. If anything goes wrong, double-clicking the backup file fully restores the previous state.
+
+### File deletion (step 6)
+
+Before attempting to delete any file or folder, the script calls `takeown /f /r /a` to take ownership and `icacls /grant Administrators:F /t` to ensure write access — bypassing TrustedInstaller protection that would otherwise block deletion.
+
+If a file is still locked (held open by a kernel driver or active process), instead of failing silently the script applies a `Deny FullControl` ACL rule to both `Everyone` and `SYSTEM`. The file cannot be executed, loaded, or read, making it effectively inert until the next reboot in Safe Mode where the driver is not loaded and the file can be cleanly deleted.
+
+### NahimicPolicyGuard (step 10)
+
+Windows feature updates (annual releases like 24H2, 25H2) can reset keys under `HKLM\SOFTWARE\Policies\...`, silently removing the Hardware ID blacklist and allowing Nahimic to reinstall on the next Windows Update cycle. The `NahimicPolicyGuard` scheduled task runs at every startup as SYSTEM and re-writes the blacklist entries, ensuring the block survives feature updates. The task is idempotent and never adds duplicate entries.
 
 ---
 
