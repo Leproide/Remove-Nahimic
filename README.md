@@ -1,8 +1,11 @@
 # Remove Nahimic
 
-A PowerShell script for the **complete, permanent removal** of Nahimic, A-Volute, Sonic Studio, and A-Studio from Windows, including their tendency to reinstall themselves silently through Windows Update and OEM software.
+A PowerShell toolkit for the **complete, permanent removal** of Nahimic, A-Volute, Sonic Studio, and A-Studio from Windows, including their tendency to reinstall themselves silently through Windows Update and OEM software.
 
-Available in **English** (`Remove_Nahimic_EN.ps1`) and **Italian** (`Rimuovi_Nahimic_ITA.ps1`). Both files are identical in logic.
+The toolkit consists of two scripts:
+
+- **`Check-Nahimic.ps1`** — read-only pre-check, run this first
+- **`Remove-Nahimic-EN.ps1`** / **`Rimuovi-Nahimic-ITA.ps1`** — full removal (English and Italian, identical logic)
 
 ---
 
@@ -28,11 +31,53 @@ The problem is that this software also:
 - cannot be cleanly uninstalled through any official OEM tool
 - registers Audio Processing Objects (APOs) that inject into the WASAPI stack, potentially conflicting with other audio software
 
-Simply deleting files or removing it from Programs and Features is not enough. This script handles all of it.
+Simply deleting files or removing it from Programs and Features is not enough. This toolkit handles all of it.
 
 ---
 
-## What the script does
+## Recommended workflow
+
+```
+1. Run Check-Nahimic.ps1       (read-only, shows what is present)
+2. If anything is found:
+   Run Remove-Nahimic-EN.ps1   (requires Administrator)
+3. Reboot
+4. Run Check-Nahimic.ps1 again (confirm clean)
+```
+
+---
+
+## Check-Nahimic.ps1
+
+A read-only pre-check script. Run it before the removal script to get a full picture of what is present on the system. It does not modify anything.
+
+**Exit codes:**
+
+| Code | Meaning |
+|------|---------|
+| `0` | One or more items detected — removal script needed |
+| `1` | Nothing found — system is clean |
+
+**What it checks:**
+
+- Win32 uninstall entries
+- AppX / Store packages
+- Windows services
+- Running processes
+- Known registry keys
+- APO subkeys (`PlaybackSS3Config`, `RecordSS3Config`) under the audio device class
+- APO property names in `FxProperties` matching known Nahimic/Sonic GUID
+- `AudioEngine\AudioProcessingObjects` registrations in HKCR
+- Driver Store entries via `pnputil`
+- PnP devices
+- Known installation folders and files
+- Scheduled tasks
+
+Output is grouped by category and sorted, with a total item count.
+
+---
+
+## What the removal script does
 
 | Step | Action |
 |------|--------|
@@ -40,13 +85,27 @@ Simply deleting files or removing it from Programs and Features is not enough. T
 | 0b | Removes AppX / Microsoft Store packages (including OEM-provisioned ones) |
 | 1 | Stops, disables, and deletes matching Windows services |
 | 2 | Kills all related running processes |
-| 3 | Deletes registry keys; scans and removes registered APOs from audio driver classes |
+| 3 | Deletes known registry keys; backs up the audio device class to a `.reg` file on the Desktop before touching anything |
+| 3b | APO cleanup — see details below |
 | 4 | Removes drivers from the Windows Driver Store via `pnputil /delete-driver /uninstall /force` |
 | 5 | Removes PnP devices via `pnputil /remove-device` |
 | 6 | Deletes known installation folders; scans `System32` and `SysWOW64` for leftover files |
 | 7 | Removes matching entries from Task Scheduler |
 | 8 | Hides pending Windows Update entries via the WUA COM API (`Microsoft.Update.Session`), same effect as the "Hide" button in Windows Update MiniTool, but fully automated |
 | 9 | Blacklists Hardware IDs under `HKLM\SOFTWARE\Policies\Microsoft\Windows\DeviceInstall\Restrictions\DenyDeviceIDs`, including IDs detected live from PnP devices and hidden WU entries |
+
+### APO cleanup (step 3b)
+
+Previous approaches to APO cleanup attempted to match Nahimic-related strings against registry value data. This does not work: the values stored under `PlaybackSS3Config`, `RecordSS3Config`, and `FxProperties` are binary **PROPVARIANT** blobs — their `.ToString()` representation is `System.Byte[]`, not a readable string. Pattern matching on them silently fails.
+
+The script solves this differently:
+
+- **`PlaybackSS3Config` and `RecordSS3Config`** are subkeys that exist exclusively for Sonic Studio 3. If SS3 is not installed, they are orphaned garbage. The script deletes them entirely, for every audio device index found under the audio driver class (`0000`, `0001`, etc.), making the cleanup universal regardless of device index.
+- **`FxProperties`** is cleaned by matching on the **property name** (a GUID string), not the value. The known Nahimic/Sonic APO GUIDs are listed explicitly.
+- **`AudioEngine\AudioProcessingObjects`** in HKCR is cleaned by matching `FriendlyName` and `Copyright` fields, which are readable strings.
+- The Windows Audio services (`audiosrv`, `AudioEndpointBuilder`) are stopped before the cleanup and restarted after, so the keys are not held open by the audio engine during deletion.
+- If `Remove-Item` fails due to ACL restrictions, the script falls back to `reg.exe delete /f`.
+- A `.reg` backup of the entire audio device class is exported to the Desktop before any modification. If anything goes wrong, double-clicking the backup file fully restores the previous state.
 
 ---
 
@@ -60,7 +119,7 @@ Simply deleting files or removing it from Programs and Features is not enough. T
 - **NahimicAPO** (Audio Processing Object component)
 - MSI Dragon Center / One Dragon Center bundled reinstallers
 
-The matching pattern is a single regex variable at the top of the script. You can extend it without touching the rest of the code.
+The matching pattern is a single regex variable at the top of each script. You can extend it without touching the rest of the code.
 
 ---
 
@@ -68,23 +127,28 @@ The matching pattern is a single regex variable at the top of the script. You ca
 
 - Windows 10 or Windows 11
 - PowerShell 5.1 or later (pre-installed on all supported Windows versions)
-- **Administrator privileges** (the script will refuse to run without them)
+- **Administrator privileges** for the removal script (`Check-Nahimic.ps1` does not require elevation, but some checks — such as AppX provisioned packages and PnP devices — may return incomplete results without it)
 
 ---
 
 ## Usage
 
-1. Download `Remove-Nahimic-EN.ps1` (or the Italian version)
+1. Download both scripts
 2. Open PowerShell **as Administrator**
 3. If needed, allow script execution:
    ```powershell
    Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
    ```
-4. Run the script:
+4. Run the pre-check:
+   ```powershell
+   .\Check-Nahimic.ps1
+   ```
+5. If anything is found, run the removal script:
    ```powershell
    .\Remove-Nahimic-EN.ps1
    ```
-5. Reboot when prompted
+6. Reboot when prompted
+7. Run `Check-Nahimic.ps1` again to confirm the system is clean
 
 > **Tip:** If MSI Dragon Center or ASUS Armoury Crate is installed, uninstall it **before** running this script. Both are known to reinstall Nahimic/Sonic Studio as a side effect of their own update mechanisms.
 
@@ -92,14 +156,14 @@ The matching pattern is a single regex variable at the top of the script. You ca
 
 ## If it comes back
 
-The Hardware ID blacklist (step 9) is the primary permanent block, it prevents Windows PnP and Windows Update from ever reinstalling the driver, including after feature updates.
+The Hardware ID blacklist (step 9) is the primary permanent block. It prevents Windows PnP and Windows Update from ever reinstalling the driver, including after feature updates.
 
 If the software somehow returns, check:
 - Whether MSI Dragon Center / ASUS Armoury Crate / GeForce Experience was reinstalled (they are known reinstallers)
 - Whether the WU entries were successfully hidden (verify in Windows Update MiniTool under the "Hidden" tab)
 - Whether the `DenyDeviceIDs` registry key survived a Windows feature update
 
-Running the script again is safe, it skips anything already absent and will not add duplicate blacklist entries.
+Running the removal script again is safe — it skips anything already absent and will not add duplicate blacklist entries.
 
 ---
 
@@ -108,10 +172,10 @@ Running the script again is safe, it skips anything already absent and will not 
 - Any audio drivers not matching the target pattern (Realtek, AMD, Intel, etc.)
 - ASUS Armoury Crate itself (only its bundled audio components)
 - Any scheduled tasks, services, or files outside the known Nahimic/A-Volute/SonicStudio paths
-- Windows audio stack configuration beyond the APO registry entries
+- Windows audio stack configuration beyond the APO registry entries listed above
 
 ---
 
 ## Credits
 
-Removal procedure originally documented by the community on Reddit. This script automates the full manual process and adds the Windows Update hiding and Hardware ID blacklisting steps that were missing from existing guides.
+Removal procedure originally documented by the community on Reddit. This script automates the full manual process and adds the Windows Update hiding, Hardware ID blacklisting, and binary-safe APO cleanup steps that were missing from existing guides.
