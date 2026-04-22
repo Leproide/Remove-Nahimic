@@ -1,6 +1,6 @@
 # Remove Nahimic
 
-A PowerShell toolkit for the **complete, permanent removal** of Nahimic, A-Volute, Sonic Studio, and A-Studio from Windows, including their tendency to reinstall themselves silently through Windows Update and OEM software.
+A PowerShell toolkit for the **complete, permanent removal** of Nahimic, A-Volute, Sonic Studio from Windows, including their tendency to reinstall themselves silently through Windows Update and OEM software.
 
 The toolkit consists of two scripts:
 
@@ -11,7 +11,7 @@ The toolkit consists of two scripts:
 
 ## Background
 
-Nahimic (developed by A-Volute) is audio enhancement software bundled by OEMs such as MSI, ASUS, HP, and others. ASUS ships a similar product under the names **Sonic Studio** and **A-Studio**.
+Nahimic (developed by A-Volute) is audio enhancement software bundled by OEMs such as MSI, ASUS, HP, and others. ASUS ships a similar product under the names **Sonic Studio** and **Asus Sonic Studio/Suite**.
 
 Beyond the installation and persistence issues described below, **Nahimic is simply bad software that degrades audio quality**. It injects Audio Processing Object (APO) layers directly into the Windows WASAPI stack to apply its "enhancements", which in practice means:
 
