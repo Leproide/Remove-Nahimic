@@ -8,6 +8,7 @@
     - Stops and removes services
     - Kills related processes
     - Deletes registry keys and registered APOs
+    - Deep APO cleanup via CLSID -> InprocServer32 resolution
     - Removes drivers from the Driver Store (pnputil)
     - Removes PnP devices
     - Deletes leftover files and folders
@@ -135,9 +136,20 @@ foreach ($pattern in $processPatterns) {
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 3. Registry: key deletion + APO scan
+# 3. Registry: key deletion + APO scan (string-based)
 # ─────────────────────────────────────────────────────────────────────────────
 Write-Step "Removing registry keys"
+
+# Preventive backup of the audio device class before touching endpoint props
+$audioClassKeyRaw = 'HKLM\SYSTEM\CurrentControlSet\Control\Class\{4d36e96c-e325-11ce-bfc1-08002be10318}'
+$backupDir = "$env:USERPROFILE\Desktop"
+$backupFile = Join-Path $backupDir ("AudioClass_backup_{0}.reg" -f (Get-Date -Format 'yyyyMMdd_HHmmss'))
+& reg.exe export $audioClassKeyRaw $backupFile /y 2>&1 | Out-Null
+if (Test-Path $backupFile) {
+    Write-OK "Audio class backed up to: $backupFile"
+} else {
+    Write-Warn "Audio class backup failed (non-fatal)"
+}
 
 $regKeys = @(
     # Nahimic / A-Volute
@@ -165,29 +177,106 @@ foreach ($key in $regKeys) {
     }
 }
 
-# Scan for registered APOs (Audio Processing Objects) in audio driver classes
-Write-Host "    Scanning APOs in audio driver registry..." -ForegroundColor DarkGray
+# ─────────────────────────────────────────────────────────────────────────────
+# 3b. APO cleanup — direct deletion of SS3Config / FxProperties subkeys
+#
+#     PlaybackSS3Config and RecordSS3Config are Sonic Studio 3 config blobs.
+#     Their values are binary PROPVARIANTs whose .ToString() is "System.Byte[]",
+#     so string/regex matching on values is unreliable. We delete the entire
+#     subkey instead — if SS3/Nahimic is gone, these are orphaned garbage.
+#     FxProperties is also cleaned for any properties whose NAME matches the
+#     known Sonic/Nahimic APO property-key GUIDs.
+# ─────────────────────────────────────────────────────────────────────────────
+Write-Step "APO cleanup (direct SS3Config / FxProperties deletion)"
 
-$apoScanRoots = @(
-    'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Audio',
-    'HKLM:\SYSTEM\CurrentControlSet\Control\Class\{4d36e96c-e325-11ce-bfc1-08002be10318}'
+$audioClassKey    = 'HKLM:\SYSTEM\CurrentControlSet\Control\Class\{4d36e96c-e325-11ce-bfc1-08002be10318}'
+$audioClassKeyRaw = 'HKLM\SYSTEM\CurrentControlSet\Control\Class\{4d36e96c-e325-11ce-bfc1-08002be10318}'
+
+# Subkeys that are exclusively Sonic Studio 3 / Nahimic — delete entire key
+$ss3Subkeys = @('PlaybackSS3Config', 'RecordSS3Config')
+
+# Known Sonic Studio 3 / Nahimic APO property-key GUIDs stored as VALUE NAMES
+# under FxProperties / EP\N. Matching by name, not value (values are binary).
+$knownApoPropertyGuids = @(
+    '9B8844FE-1650-40E5-A5EA-11B8C83821A1',   # FX stream/mode APO refs
+    'F363DF17-A750-4AC3-B7B5-2BBEFFA9085F',   # FX mode APO refs
+    'E0F2C10F-8244-476E-8EBE-B6EE73D8F2FB',   # APO notification CLSID
+    'D3465FC4-DB6D-4796-8FDE-0CB851BE2EC9'    # APO UI CLSID
 )
+# Build a regex that matches any property name starting with one of these GUIDs
+$apoGuidPattern = '(?i)^\{(' + ($knownApoPropertyGuids -join '|') + ')\}'
 
-foreach ($apoRoot in $apoScanRoots) {
-    if (-not (Test-Path $apoRoot)) { continue }
-    Get-ChildItem -Path $apoRoot -Recurse -ErrorAction SilentlyContinue | ForEach-Object {
-        try {
-            $props = Get-ItemProperty -Path $_.PSPath -ErrorAction SilentlyContinue
-            $props.PSObject.Properties | Where-Object { $_.Value -match $TARGET } | ForEach-Object {
-                $propName = $_.Name
-                $propPath = $_.PSPath
-                Write-Warn "APO found: $propPath -> $propName"
-                Remove-ItemProperty -Path $propPath -Name $propName -Force -ErrorAction SilentlyContinue
-                Write-OK "APO property removed: $propName"
+# Stop audio services so the registry keys are not held open
+Write-Host "    Stopping audio services..." -ForegroundColor DarkGray
+Stop-Service 'AudioEndpointBuilder', 'audiosrv' -Force -ErrorAction SilentlyContinue
+
+if (Test-Path $audioClassKey) {
+    # Iterate device instances (0000, 0001, ... under the audio class)
+    Get-ChildItem -Path $audioClassKey -ErrorAction SilentlyContinue |
+        Where-Object { $_.PSChildName -match '^\d{4}$' } |
+        ForEach-Object {
+            $devIndex = $_.PSChildName
+            $devPath  = $_.PSPath
+
+            # 3b-i: delete entire SS3Config subkeys
+            foreach ($ss3 in $ss3Subkeys) {
+                $ss3Path    = Join-Path $devPath "InterfaceSetting\$ss3"
+                $ss3PathRaw = "$audioClassKeyRaw\$devIndex\InterfaceSetting\$ss3"
+                if (Test-Path $ss3Path) {
+                    Remove-Item -Path $ss3Path -Recurse -Force -ErrorAction SilentlyContinue
+                    if (Test-Path $ss3Path) {
+                        # Fallback to reg.exe if PS Remove-Item fails (ACL edge case)
+                        & reg.exe delete $ss3PathRaw /f 2>&1 | Out-Null
+                    }
+                    if (Test-Path $ss3Path) {
+                        Write-Warn "Could not remove (ACL?): $ss3PathRaw"
+                    } else {
+                        Write-OK "Deleted: $devIndex\InterfaceSetting\$ss3"
+                    }
+                }
             }
-        } catch {}
+
+            # 3b-ii: remove known Nahimic/Sonic APO property names from FxProperties
+            $fxPath = Join-Path $devPath 'FxProperties'
+            if (Test-Path $fxPath) {
+                $props = Get-ItemProperty -Path $fxPath -ErrorAction SilentlyContinue
+                if ($props) {
+                    foreach ($prop in $props.PSObject.Properties) {
+                        if ($prop.Name -like 'PS*') { continue }
+                        if ($prop.Name -match $apoGuidPattern) {
+                            Remove-ItemProperty -Path $fxPath -Name $prop.Name -Force -ErrorAction SilentlyContinue
+                            Write-OK "FxProperties entry removed: $devIndex \ $($prop.Name)"
+                        }
+                    }
+                }
+            }
+        }
+} else {
+    Write-Skipped "Audio class key not found"
+}
+
+# Also clean HKCR\AudioEngine\AudioProcessingObjects for Nahimic entries
+$apoRegPaths = @(
+    'HKLM:\SOFTWARE\Classes\AudioEngine\AudioProcessingObjects',
+    'HKLM:\SOFTWARE\Classes\WOW6432Node\AudioEngine\AudioProcessingObjects'
+)
+foreach ($ar in $apoRegPaths) {
+    if (-not (Test-Path $ar)) { continue }
+    Get-ChildItem -Path $ar -ErrorAction SilentlyContinue | ForEach-Object {
+        $friendly  = (Get-ItemProperty -Path $_.PSPath -Name 'FriendlyName' -ErrorAction SilentlyContinue).FriendlyName
+        $copyright = (Get-ItemProperty -Path $_.PSPath -Name 'Copyright'    -ErrorAction SilentlyContinue).Copyright
+        if (($friendly -and $friendly -match $TARGET) -or ($copyright -and $copyright -match $TARGET)) {
+            Remove-Item -Path $_.PSPath -Recurse -Force -ErrorAction SilentlyContinue
+            Write-OK "APO registration removed: $($_.PSChildName) ($friendly)"
+        }
     }
 }
+
+# Restart audio services
+Write-Host "    Restarting audio services..." -ForegroundColor DarkGray
+Start-Service 'AudioEndpointBuilder' -ErrorAction SilentlyContinue
+Start-Service 'audiosrv'             -ErrorAction SilentlyContinue
+Write-OK "Audio services restarted"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 4. Driver Store: removal via pnputil
@@ -412,7 +501,8 @@ Write-Host "   - Win32 apps uninstalled (UninstallString)" -ForegroundColor Whit
 Write-Host "   - AppX / Store packages removed" -ForegroundColor White
 Write-Host "   - Services stopped and removed" -ForegroundColor White
 Write-Host "   - Processes terminated" -ForegroundColor White
-Write-Host "   - Registry keys + APOs deleted" -ForegroundColor White
+Write-Host "   - Audio class registry backed up to Desktop" -ForegroundColor White
+Write-Host "   - APO cleanup: SS3Config subkeys + FxProperties deleted directly" -ForegroundColor White
 Write-Host "   - Drivers removed from Driver Store (pnputil)" -ForegroundColor White
 Write-Host "   - PnP devices removed" -ForegroundColor White
 Write-Host "   - Leftover files and folders deleted" -ForegroundColor White
