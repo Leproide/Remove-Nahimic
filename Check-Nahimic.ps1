@@ -1,4 +1,7 @@
 <#
+Author: Leprechaun
+Repo: https://github.com/Leproide/Remove-Nahimic
+
 .SYNOPSIS
     Pre-check: detects Nahimic / A-Volute / Sonic Studio / A-Studio remnants.
 .DESCRIPTION
@@ -13,6 +16,10 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'SilentlyContinue'
 
 $TARGET = 'Nahimic|A[-_ ]Volute|NhNotif|\bA[-_ ]?Studio\b|Sonic[-_ ]?Studio|SonicSuite|NahimicAPO'
+
+# Narrow pattern for free-text fields (FriendlyName, Copyright) where broad
+# terms like "Studio" would cause false positives on third-party APOs.
+$APO_TARGET = 'Nahimic|A[-_ ]Volute|NahimicAPO|NhNotif'
 
 $hits = [System.Collections.Generic.List[string]]::new()
 function Add-Hit { param([string]$Text) if ($Text -and -not $hits.Contains($Text)) { $hits.Add($Text) | Out-Null } }
@@ -96,13 +103,16 @@ if (Test-Path $audioClassKey) {
 }
 
 # ── 7. HKCR AudioProcessingObjects ───────────────────────────────────────────
+# Uses $APO_TARGET (narrow) instead of $TARGET to avoid false positives on
+# third-party APOs (Conexant CVHT, Waves, SRS, etc.) whose FriendlyName or
+# Copyright may contain generic words like "Studio" matched by $TARGET.
 foreach ($ar in @('HKLM:\SOFTWARE\Classes\AudioEngine\AudioProcessingObjects',
                   'HKLM:\SOFTWARE\Classes\WOW6432Node\AudioEngine\AudioProcessingObjects')) {
     if (-not (Test-Path $ar)) { continue }
     Get-ChildItem -Path $ar -ErrorAction SilentlyContinue | ForEach-Object {
         $friendly  = (Get-ItemProperty -Path $_.PSPath -Name 'FriendlyName' -ErrorAction SilentlyContinue).FriendlyName
         $copyright = (Get-ItemProperty -Path $_.PSPath -Name 'Copyright'    -ErrorAction SilentlyContinue).Copyright
-        if (($friendly -and $friendly -match $TARGET) -or ($copyright -and $copyright -match $TARGET)) {
+        if (($friendly -and $friendly -match $APO_TARGET) -or ($copyright -and $copyright -match $APO_TARGET)) {
             Add-Hit "APO registration: $($_.PSChildName) ($friendly)"
         }
     }
@@ -152,17 +162,25 @@ Get-ScheduledTask -ErrorAction SilentlyContinue |
     ForEach-Object { Add-Hit "Scheduled task:  $($_.TaskPath)$($_.TaskName)" }
 
 # ── Result ────────────────────────────────────────────────────────────────────
+$logFile = "C:\Windows\Temp\Check-Nahimic.log"
+
 if ($hits.Count -gt 0) {
-    Write-Host ""
-    Write-Host "WARNING: Nahimic / A-Volute / Sonic Studio detected ($($hits.Count) item(s)):" -ForegroundColor Yellow
-    Write-Host ""
-    $hits | Sort-Object | ForEach-Object { Write-Host "  - $_" -ForegroundColor Yellow }
-    Write-Host ""
-    Write-Host "Run Remove-Nahimic.ps1 as Administrator to clean up." -ForegroundColor Cyan
+    $lines = @()
+    $lines += ""
+    $lines += "WARNING: Nahimic / A-Volute / Sonic Studio detected ($($hits.Count) item(s)):"
+    $lines += ""
+    $hits | Sort-Object | ForEach-Object { $lines += "  - $_" }
+    $lines += ""
+    $lines += "Run Remove-Nahimic.ps1 as Administrator to clean up."
+
+    $lines | ForEach-Object { Write-Output $_ }
+    $lines | Out-File -FilePath $logFile -Encoding UTF8 -Force
+
     exit 0
 } else {
-    Write-Host ""
-    Write-Host "Nahimic not present — system is clean." -ForegroundColor Green
-    Write-Host ""
+    Write-Output ""
+    Write-Output "Nahimic not present — system is clean."
+    Write-Output ""
+    "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') - Clean" | Out-File -FilePath $logFile -Encoding UTF8 -Force
     exit 1
 }
