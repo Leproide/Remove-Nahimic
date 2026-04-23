@@ -157,8 +157,10 @@ foreach ($p in @(
 }
 
 # ── 11. Scheduled tasks ───────────────────────────────────────────────────────
+# Exclude NahimicPolicyGuard — created by the removal script itself, not by Nahimic.
 Get-ScheduledTask -ErrorAction SilentlyContinue |
-    Where-Object { $_.TaskName -match $TARGET -or $_.TaskPath -match $TARGET } |
+    Where-Object { ($_.TaskName -match $TARGET -or $_.TaskPath -match $TARGET) -and
+                   $_.TaskName -ne 'NahimicPolicyGuard' } |
     ForEach-Object { Add-Hit "Scheduled task:  $($_.TaskPath)$($_.TaskName)" }
 
 # ── Result ────────────────────────────────────────────────────────────────────
