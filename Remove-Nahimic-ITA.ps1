@@ -35,9 +35,9 @@ function Write-OK      { param([string]$T); Write-Host "    [+] $T" -ForegroundC
 function Write-Warn    { param([string]$T); Write-Host "    [!] $T" -ForegroundColor Yellow }
 function Write-Skipped { param([string]$T); Write-Host "    [-] $T (non trovato, skip)" -ForegroundColor DarkGray }
 
-# ─────────────────────────────────────────────────────────────────────────────
+# ----------------------------------------------------------------------------
 # 0. Disinstallazione app Win32
-# ─────────────────────────────────────────────────────────────────────────────
+# ----------------------------------------------------------------------------
 Write-Step "Disinstallazione applicazioni Win32"
 
 $uninstallRoots = @(
@@ -67,9 +67,9 @@ foreach ($root in $uninstallRoots) {
         }
 }
 
-# ─────────────────────────────────────────────────────────────────────────────
+# ----------------------------------------------------------------------------
 # 0b. Pacchetti AppX / Store
-# ─────────────────────────────────────────────────────────────────────────────
+# ----------------------------------------------------------------------------
 Write-Step "Rimozione pacchetti AppX / Store"
 
 Get-AppxPackage -AllUsers -ErrorAction SilentlyContinue |
@@ -88,9 +88,9 @@ Get-AppxProvisionedPackage -Online -ErrorAction SilentlyContinue |
         Write-OK "Provisioned AppX rimosso: $($_.DisplayName)"
     }
 
-# ─────────────────────────────────────────────────────────────────────────────
+# ----------------------------------------------------------------------------
 # 1. Servizi
-# ─────────────────────────────────────────────────────────────────────────────
+# ----------------------------------------------------------------------------
 Write-Step "Arresto e rimozione servizi"
 
 foreach ($pattern in @('NahimicService','Nahimic_Mirroring','AVolute*','SonicSuite*','ASSonicStudio*','ASonicStudio*')) {
@@ -102,9 +102,9 @@ foreach ($pattern in @('NahimicService','Nahimic_Mirroring','AVolute*','SonicSui
     }
 }
 
-# ─────────────────────────────────────────────────────────────────────────────
+# ----------------------------------------------------------------------------
 # 2. Processi
-# ─────────────────────────────────────────────────────────────────────────────
+# ----------------------------------------------------------------------------
 Write-Step "Terminazione processi correlati"
 
 foreach ($pattern in @('NahimicSvc*','NahimicService*','A-Volute*','AVS*','NhNotifSys*',
@@ -114,9 +114,9 @@ foreach ($pattern in @('NahimicSvc*','NahimicService*','A-Volute*','AVS*','NhNot
     if ($procs) { $procs | Stop-Process -Force; Write-OK "Processo '$pattern' terminato" }
 }
 
-# ─────────────────────────────────────────────────────────────────────────────
+# ----------------------------------------------------------------------------
 # 3. Registro: chiavi note
-# ─────────────────────────────────────────────────────────────────────────────
+# ----------------------------------------------------------------------------
 Write-Step "Rimozione chiavi di registro"
 
 # Backup preventivo della classe audio
@@ -146,7 +146,7 @@ foreach ($key in $regKeys) {
     else { Write-Skipped $key }
 }
 
-# ─────────────────────────────────────────────────────────────────────────────
+# ----------------------------------------------------------------------------
 # 3b. Pulizia APO diretta — SS3Config / FxProperties
 #
 #     I valori sotto PlaybackSS3Config / RecordSS3Config sono PROPVARIANT
@@ -154,7 +154,7 @@ foreach ($key in $regKeys) {
 #     matching sui valori non funziona. Si elimina l'intera sottochiave.
 #     FxProperties viene ripulita confrontando il NOME della proprietà con
 #     i GUID APO noti di Nahimic/Sonic (i nomi sono stringhe leggibili).
-# ─────────────────────────────────────────────────────────────────────────────
+# ----------------------------------------------------------------------------
 Write-Step "Pulizia APO diretta (SS3Config + FxProperties)"
 
 $audioClassKey = 'HKLM:\SYSTEM\CurrentControlSet\Control\Class\{4d36e96c-e325-11ce-bfc1-08002be10318}'
@@ -229,9 +229,9 @@ Start-Service 'AudioEndpointBuilder' -ErrorAction SilentlyContinue
 Start-Service 'audiosrv'             -ErrorAction SilentlyContinue
 Write-OK "Servizi audio riavviati"
 
-# ─────────────────────────────────────────────────────────────────────────────
+# ----------------------------------------------------------------------------
 # 4. Driver Store
-# ─────────────────────────────────────────────────────────────────────────────
+# ----------------------------------------------------------------------------
 Write-Step "Rimozione driver da Driver Store (pnputil)"
 
 $driverList = pnputil /enum-drivers 2>&1
@@ -258,9 +258,9 @@ else {
     }
 }
 
-# ─────────────────────────────────────────────────────────────────────────────
+# ----------------------------------------------------------------------------
 # 5. Dispositivi PnP
-# ─────────────────────────────────────────────────────────────────────────────
+# ----------------------------------------------------------------------------
 Write-Step "Disinstallazione dispositivi PnP"
 
 Get-PnpDevice -ErrorAction SilentlyContinue |
@@ -271,9 +271,9 @@ Get-PnpDevice -ErrorAction SilentlyContinue |
         Write-OK "Dispositivo rimosso: $($_.FriendlyName)"
     }
 
-# ─────────────────────────────────────────────────────────────────────────────
+# ----------------------------------------------------------------------------
 # 6. File system
-# ─────────────────────────────────────────────────────────────────────────────
+# ----------------------------------------------------------------------------
 Write-Step "Eliminazione file e cartelle"
 
 $paths = @(
@@ -333,9 +333,9 @@ foreach ($dir in @("$env:SystemRoot\System32", "$env:SystemRoot\SysWOW64")) {
         ForEach-Object { Remove-Forced $_.FullName }
 }
 
-# ─────────────────────────────────────────────────────────────────────────────
+# ----------------------------------------------------------------------------
 # 7. Task Scheduler
-# ─────────────────────────────────────────────────────────────────────────────
+# ----------------------------------------------------------------------------
 Write-Step "Rimozione task schedulati"
 
 $found = $false
@@ -348,9 +348,9 @@ Get-ScheduledTask -ErrorAction SilentlyContinue |
     }
 if (-not $found) { Write-Skipped "Nessun task corrispondente" }
 
-# ─────────────────────────────────────────────────────────────────────────────
+# ----------------------------------------------------------------------------
 # 8. Windows Update: nascondi driver pendenti (WUA COM API)
-# ─────────────────────────────────────────────────────────────────────────────
+# ----------------------------------------------------------------------------
 Write-Step "Nascondere aggiornamenti driver pendenti (Windows Update)"
 
 $wuSearcher = $null
@@ -374,9 +374,9 @@ try {
     Write-Host "    Nascondi manualmente da Windows Update o usa Windows Update Mini Tool." -ForegroundColor DarkGray
 }
 
-# ─────────────────────────────────────────────────────────────────────────────
+# ----------------------------------------------------------------------------
 # 9. Blacklist Hardware ID
-# ─────────────────────────────────────────────────────────────────────────────
+# ----------------------------------------------------------------------------
 Write-Step "Blacklist Hardware ID (blocco permanente)"
 
 $hwIdRegPath  = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\DeviceInstall\Restrictions'
@@ -424,12 +424,12 @@ foreach ($hwId in $allHwIds) {
     $counter++; $existingValues[$hwId] = $true
 }
 
-# ─────────────────────────────────────────────────────────────────────────────
+# ----------------------------------------------------------------------------
 # 10. Task schedulato: NahimicPolicyGuard
 #     Riapplica la blacklist degli HW ID ad ogni avvio come SYSTEM.
 #     Protegge dai feature update di Windows che possono resettare le chiavi
 #     di Group Policy sotto HKLM\SOFTWARE\Policies\...
-# ─────────────────────────────────────────────────────────────────────────────
+# ----------------------------------------------------------------------------
 Write-Step "Creazione task schedulato NahimicPolicyGuard"
 
 $guardTaskName = 'NahimicPolicyGuard'
@@ -484,9 +484,9 @@ try {
     Write-Warn "Impossibile creare il task schedulato: $_"
 }
 
-# ─────────────────────────────────────────────────────────────────────────────
+# ----------------------------------------------------------------------------
 # 11. Riepilogo
-# ─────────────────────────────────────────────────────────────────────────────
+# ----------------------------------------------------------------------------
 $line = "─" * 62
 Write-Host "`n$line" -ForegroundColor DarkGray
 Write-Host " Rimozione completata: Nahimic / A-Volute / Sonic Studio / A-Studio" -ForegroundColor Green
