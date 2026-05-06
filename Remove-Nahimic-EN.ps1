@@ -27,9 +27,9 @@ Repo: https://github.com/Leproide/Remove-Nahimic/
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'SilentlyContinue'
 
-# ─────────────────────────────────────────────────────────────────────────────
+# ----------------------------------------------------------------------------
 # Central pattern — add terms here to extend the cleanup scope
-# ─────────────────────────────────────────────────────────────────────────────
+# ----------------------------------------------------------------------------
 $TARGET = 'Nahimic|A[-_ ]Volute|NhNotif|\bA[-_ ]?Studio\b|Sonic[-_ ]?Studio|SonicSuite|NahimicAPO'
 
 function Write-Step    { param([string]$T); Write-Host "`n[*] $T" -ForegroundColor Cyan }
@@ -37,9 +37,9 @@ function Write-OK      { param([string]$T); Write-Host "    [+] $T" -ForegroundC
 function Write-Warn    { param([string]$T); Write-Host "    [!] $T" -ForegroundColor Yellow }
 function Write-Skipped { param([string]$T); Write-Host "    [-] $T (not found, skipping)" -ForegroundColor DarkGray }
 
-# ─────────────────────────────────────────────────────────────────────────────
+# ----------------------------------------------------------------------------
 # 0. Uninstall Win32 applications via registry UninstallString
-# ─────────────────────────────────────────────────────────────────────────────
+# ----------------------------------------------------------------------------
 Write-Step "Uninstalling Win32 applications"
 
 $uninstallRoots = @(
@@ -78,9 +78,9 @@ foreach ($root in $uninstallRoots) {
         }
 }
 
-# ─────────────────────────────────────────────────────────────────────────────
+# ----------------------------------------------------------------------------
 # 0b. Remove AppX / Store packages
-# ─────────────────────────────────────────────────────────────────────────────
+# ----------------------------------------------------------------------------
 Write-Step "Removing AppX / Store packages"
 
 Get-AppxPackage -AllUsers -ErrorAction SilentlyContinue |
@@ -99,9 +99,9 @@ Get-AppxProvisionedPackage -Online -ErrorAction SilentlyContinue |
         Write-OK "Provisioned AppX removed: $($_.DisplayName)"
     }
 
-# ─────────────────────────────────────────────────────────────────────────────
+# ----------------------------------------------------------------------------
 # 1. Services: stop + disable + delete
-# ─────────────────────────────────────────────────────────────────────────────
+# ----------------------------------------------------------------------------
 Write-Step "Stopping and removing services"
 
 $servicePatterns = @(
@@ -119,9 +119,9 @@ foreach ($pattern in $servicePatterns) {
     }
 }
 
-# ─────────────────────────────────────────────────────────────────────────────
+# ----------------------------------------------------------------------------
 # 2. Processes: kill
-# ─────────────────────────────────────────────────────────────────────────────
+# ----------------------------------------------------------------------------
 Write-Step "Killing related processes"
 
 $processPatterns = @(
@@ -139,9 +139,9 @@ foreach ($pattern in $processPatterns) {
     }
 }
 
-# ─────────────────────────────────────────────────────────────────────────────
+# ----------------------------------------------------------------------------
 # 3. Registry: key deletion + APO scan (string-based)
-# ─────────────────────────────────────────────────────────────────────────────
+# ----------------------------------------------------------------------------
 Write-Step "Removing registry keys"
 
 # Preventive backup of the audio device class before touching endpoint props
@@ -181,7 +181,7 @@ foreach ($key in $regKeys) {
     }
 }
 
-# ─────────────────────────────────────────────────────────────────────────────
+# ----------------------------------------------------------------------------
 # 3b. APO cleanup — direct deletion of SS3Config / FxProperties subkeys
 #
 #     PlaybackSS3Config and RecordSS3Config are Sonic Studio 3 config blobs.
@@ -190,7 +190,7 @@ foreach ($key in $regKeys) {
 #     subkey instead — if SS3/Nahimic is gone, these are orphaned garbage.
 #     FxProperties is also cleaned for any properties whose NAME matches the
 #     known Sonic/Nahimic APO property-key GUIDs.
-# ─────────────────────────────────────────────────────────────────────────────
+# ----------------------------------------------------------------------------
 Write-Step "APO cleanup (direct SS3Config / FxProperties deletion)"
 
 $audioClassKey    = 'HKLM:\SYSTEM\CurrentControlSet\Control\Class\{4d36e96c-e325-11ce-bfc1-08002be10318}'
@@ -282,9 +282,9 @@ Start-Service 'AudioEndpointBuilder' -ErrorAction SilentlyContinue
 Start-Service 'audiosrv'             -ErrorAction SilentlyContinue
 Write-OK "Audio services restarted"
 
-# ─────────────────────────────────────────────────────────────────────────────
+# ----------------------------------------------------------------------------
 # 4. Driver Store: removal via pnputil
-# ─────────────────────────────────────────────────────────────────────────────
+# ----------------------------------------------------------------------------
 Write-Step "Removing drivers from Driver Store (pnputil)"
 
 $driverList = pnputil /enum-drivers 2>&1
@@ -315,9 +315,9 @@ if ($infFiles.Count -eq 0) {
     }
 }
 
-# ─────────────────────────────────────────────────────────────────────────────
+# ----------------------------------------------------------------------------
 # 5. PnP devices: removal
-# ─────────────────────────────────────────────────────────────────────────────
+# ----------------------------------------------------------------------------
 Write-Step "Removing PnP devices"
 
 Get-PnpDevice -ErrorAction SilentlyContinue |
@@ -328,9 +328,9 @@ Get-PnpDevice -ErrorAction SilentlyContinue |
         Write-OK "Device removed: $($_.FriendlyName)"
     }
 
-# ─────────────────────────────────────────────────────────────────────────────
+# ----------------------------------------------------------------------------
 # 6. File system: delete files and folders
-# ─────────────────────────────────────────────────────────────────────────────
+# ----------------------------------------------------------------------------
 Write-Step "Deleting files and folders"
 
 $paths = @(
@@ -392,9 +392,9 @@ foreach ($dir in @("$env:SystemRoot\System32", "$env:SystemRoot\SysWOW64")) {
         ForEach-Object { Remove-Forced $_.FullName }
 }
 
-# ─────────────────────────────────────────────────────────────────────────────
+# ----------------------------------------------------------------------------
 # 7. Task Scheduler: remove matching tasks
-# ─────────────────────────────────────────────────────────────────────────────
+# ----------------------------------------------------------------------------
 Write-Step "Removing scheduled tasks"
 
 $found = $false
@@ -407,11 +407,11 @@ Get-ScheduledTask -ErrorAction SilentlyContinue |
     }
 if (-not $found) { Write-Skipped "No matching scheduled tasks" }
 
-# ─────────────────────────────────────────────────────────────────────────────
+# ----------------------------------------------------------------------------
 # 8. Windows Update: hide pending updates via WUA COM API
 #    Equivalent to the "Hide" button in Windows Update MiniTool, fully
 #    automated with no GUI required.
-# ─────────────────────────────────────────────────────────────────────────────
+# ----------------------------------------------------------------------------
 Write-Step "Hiding pending Windows Update entries"
 
 $wuSearcher = $null
@@ -442,9 +442,9 @@ try {
     Write-Host "    Hide the updates manually via Windows Update or Windows Update MiniTool." -ForegroundColor DarkGray
 }
 
-# ─────────────────────────────────────────────────────────────────────────────
+# ----------------------------------------------------------------------------
 # 9. Hardware ID blacklist — permanent block via Group Policy registry
-# ─────────────────────────────────────────────────────────────────────────────
+# ----------------------------------------------------------------------------
 Write-Step "Blacklisting Hardware IDs (permanent block)"
 
 $hwIdRegPath  = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\DeviceInstall\Restrictions'
@@ -509,12 +509,12 @@ foreach ($hwId in $allHwIds) {
     $existingValues[$hwId] = $true
 }
 
-# ─────────────────────────────────────────────────────────────────────────────
+# ----------------------------------------------------------------------------
 # 10. Scheduled task: NahimicPolicyGuard
 #     Re-applies the HW ID blacklist at every startup as SYSTEM.
 #     Protects against Windows feature updates that can reset Group Policy
 #     registry keys under HKLM\SOFTWARE\Policies\...
-# ─────────────────────────────────────────────────────────────────────────────
+# ----------------------------------------------------------------------------
 Write-Step "Creating NahimicPolicyGuard scheduled task"
 
 $guardTaskName = 'NahimicPolicyGuard'
@@ -569,9 +569,9 @@ try {
     Write-Warn "Could not create scheduled task: $_"
 }
 
-# ─────────────────────────────────────────────────────────────────────────────
+# ----------------------------------------------------------------------------
 # 11. Summary
-# ─────────────────────────────────────────────────────────────────────────────
+# ----------------------------------------------------------------------------
 $line = "─" * 62
 Write-Host "`n$line" -ForegroundColor DarkGray
 Write-Host " Removal complete: Nahimic / A-Volute / Sonic Studio / A-Studio" -ForegroundColor Green
