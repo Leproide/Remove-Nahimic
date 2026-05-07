@@ -4,24 +4,29 @@ Author: Leprechaun
 Repo: https://github.com/Leproide/Remove-Nahimic/
 
 .SYNOPSIS
-    Complete removal of Nahimic / A-Volute / Sonic Studio / A-Studio and
-    prevention of reinstallation via Windows Update.
+Complete removal of Nahimic / A-Volute / Sonic Studio / A-Studio and
+prevention of reinstallation via Windows Update.
+
 .DESCRIPTION
-    - Uninstalls related Win32 and Store (AppX) applications
-    - Stops and removes services
-    - Kills related processes
-    - Deletes registry keys and registered APOs
-    - Direct APO cleanup (SS3Config + FxProperties) without relying on value types
-    - Removes drivers from the Driver Store (pnputil)
-    - Removes PnP devices
-    - Deletes leftover files and folders (takeown + ACL deny fallback for locked files)
-    - Removes scheduled tasks
-    - Hides pending Windows Update entries (WUA COM API)
-    - Blacklists Hardware IDs to block future reinstallations
-    - Creates NahimicPolicyGuard scheduled task to survive Windows feature updates
+- Pre-cleanup: disables any pre-existing Device Installation Restrictions
+  policy (and the NahimicPolicyGuard task) left behind by partial previous
+  runs, so driver removal cannot be blocked by our own blacklist.
+- Uninstalls related Win32 and Store (AppX) applications
+- Stops and removes services
+- Kills related processes
+- Deletes registry keys and registered APOs
+- Direct APO cleanup (SS3Config + FxProperties) without relying on value types
+- Removes drivers from the Driver Store (pnputil)
+- Removes PnP devices
+- Deletes leftover files and folders (takeown + ACL deny fallback for locked files)
+- Removes scheduled tasks
+- Hides pending Windows Update entries (WUA COM API)
+- Blacklists Hardware IDs to block future reinstallations
+- Creates NahimicPolicyGuard scheduled task to survive Windows feature updates
+
 .NOTES
-    Requires administrator privileges.
-    A reboot prompt is shown at the end.
+Requires administrator privileges.
+A reboot prompt is shown at the end.
 #>
 
 Set-StrictMode -Version Latest
@@ -38,7 +43,55 @@ function Write-Warn    { param([string]$T); Write-Host "    [!] $T" -ForegroundC
 function Write-Skipped { param([string]$T); Write-Host "    [-] $T (not found, skipping)" -ForegroundColor DarkGray }
 
 # ----------------------------------------------------------------------------
-# 0. Uninstall Win32 applications via registry UninstallString
+# 0a. PRE-CLEANUP — disable any pre-existing Device Installation Restrictions
+#
+# If the script (or just its blacklist section) was run previously, the policy
+# at HKLM\SOFTWARE\Policies\Microsoft\Windows\DeviceInstall\Restrictions and
+# the NahimicPolicyGuard scheduled task may already be active. With
+# DenyDeviceIDsRetroactive=1 Windows blocks ALL operations on devices whose
+# Hardware IDs match the deny list — including pnputil /delete-driver, which
+# fails with: "The installation of this device is forbidden by system policy."
+#
+# We disable both BEFORE touching drivers, then section 9/10 re-apply them at
+# the end. This makes the script idempotent and safe to re-run.
+# ----------------------------------------------------------------------------
+Write-Step "Pre-cleanup: clearing any existing device install restrictions"
+
+# 0a-i: disable the guard task so it can't re-arm the policy mid-run
+$preGuard = Get-ScheduledTask -TaskName 'NahimicPolicyGuard' -ErrorAction SilentlyContinue
+if ($preGuard) {
+    try {
+        Disable-ScheduledTask -TaskName 'NahimicPolicyGuard' -ErrorAction Stop | Out-Null
+        Write-OK "NahimicPolicyGuard task disabled (will be recreated at the end)"
+    } catch {
+        Write-Warn "Could not disable NahimicPolicyGuard: $_"
+    }
+} else {
+    Write-Skipped "NahimicPolicyGuard task"
+}
+
+# 0a-ii: turn off the deny policy and wipe its list
+$restrictionsPath = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\DeviceInstall\Restrictions'
+$denyListPathPre  = "$restrictionsPath\DenyDeviceIDs"
+
+if (Test-Path $restrictionsPath) {
+    Set-ItemProperty -Path $restrictionsPath -Name 'DenyDeviceIDs'            -Value 0 -Type DWord -Force
+    Set-ItemProperty -Path $restrictionsPath -Name 'DenyDeviceIDsRetroactive' -Value 0 -Type DWord -Force
+    if (Test-Path $denyListPathPre) {
+        Remove-Item -Path $denyListPathPre -Recurse -Force -ErrorAction SilentlyContinue
+        Write-OK "DenyDeviceIDs list cleared"
+    }
+    Write-OK "Device installation restrictions disabled (temporarily)"
+} else {
+    Write-Skipped "Device installation restrictions key"
+}
+
+# 0a-iii: refresh policy in-process (no reboot needed)
+& gpupdate.exe /force /target:computer 2>&1 | Out-Null
+Write-OK "Group Policy refreshed"
+
+# ----------------------------------------------------------------------------
+# 0b. Uninstall Win32 applications via registry UninstallString
 # ----------------------------------------------------------------------------
 Write-Step "Uninstalling Win32 applications"
 
@@ -52,10 +105,9 @@ foreach ($root in $uninstallRoots) {
     Get-ItemProperty $root -ErrorAction SilentlyContinue |
         Where-Object { $_.DisplayName -match $TARGET } |
         ForEach-Object {
-            $name  = $_.DisplayName
-            $qstr  = $_.QuietUninstallString
-            $ustr  = $_.UninstallString
-
+            $name = $_.DisplayName
+            $qstr = $_.QuietUninstallString
+            $ustr = $_.UninstallString
             Write-Host "    Found: $name" -ForegroundColor Yellow
 
             $cmdLine = if ($qstr) { $qstr }
@@ -79,7 +131,7 @@ foreach ($root in $uninstallRoots) {
 }
 
 # ----------------------------------------------------------------------------
-# 0b. Remove AppX / Store packages
+# 0c. Remove AppX / Store packages
 # ----------------------------------------------------------------------------
 Write-Step "Removing AppX / Store packages"
 
@@ -108,7 +160,6 @@ $servicePatterns = @(
     'NahimicService', 'Nahimic_Mirroring',
     'AVolute*', 'SonicSuite*', 'ASSonicStudio*', 'ASonicStudio*'
 )
-
 foreach ($pattern in $servicePatterns) {
     Get-Service -Name $pattern -ErrorAction SilentlyContinue | ForEach-Object {
         $svc = $_.Name
@@ -130,7 +181,6 @@ $processPatterns = @(
     'SonicStudio*', 'SonicSuite*', 'ASSonicStudio*', 'ASonicStudio*',
     'A-Studio*', 'AStudio*'
 )
-
 foreach ($pattern in $processPatterns) {
     $procs = Get-Process -Name $pattern -ErrorAction SilentlyContinue
     if ($procs) {
@@ -146,8 +196,9 @@ Write-Step "Removing registry keys"
 
 # Preventive backup of the audio device class before touching endpoint props
 $audioClassKeyRaw = 'HKLM\SYSTEM\CurrentControlSet\Control\Class\{4d36e96c-e325-11ce-bfc1-08002be10318}'
-$backupDir = "$env:USERPROFILE\Desktop"
+$backupDir  = "$env:USERPROFILE\Desktop"
 $backupFile = Join-Path $backupDir ("AudioClass_backup_{0}.reg" -f (Get-Date -Format 'yyyyMMdd_HHmmss'))
+
 & reg.exe export $audioClassKeyRaw $backupFile /y 2>&1 | Out-Null
 if (Test-Path $backupFile) {
     Write-OK "Audio class backed up to: $backupFile"
@@ -171,7 +222,6 @@ $regKeys = @(
     'HKCU:\SOFTWARE\ASUS\A-Studio',
     'HKLM:\SOFTWARE\ASUSTeK Computer Inc.\ASUS Sonic Studio'
 )
-
 foreach ($key in $regKeys) {
     if (Test-Path $key) {
         Remove-Item -Path $key -Recurse -Force
@@ -184,12 +234,12 @@ foreach ($key in $regKeys) {
 # ----------------------------------------------------------------------------
 # 3b. APO cleanup — direct deletion of SS3Config / FxProperties subkeys
 #
-#     PlaybackSS3Config and RecordSS3Config are Sonic Studio 3 config blobs.
-#     Their values are binary PROPVARIANTs whose .ToString() is "System.Byte[]",
-#     so string/regex matching on values is unreliable. We delete the entire
-#     subkey instead — if SS3/Nahimic is gone, these are orphaned garbage.
-#     FxProperties is also cleaned for any properties whose NAME matches the
-#     known Sonic/Nahimic APO property-key GUIDs.
+# PlaybackSS3Config and RecordSS3Config are Sonic Studio 3 config blobs.
+# Their values are binary PROPVARIANTs whose .ToString() is "System.Byte[]",
+# so string/regex matching on values is unreliable. We delete the entire
+# subkey instead — if SS3/Nahimic is gone, these are orphaned garbage.
+# FxProperties is also cleaned for any properties whose NAME matches the
+# known Sonic/Nahimic APO property-key GUIDs.
 # ----------------------------------------------------------------------------
 Write-Step "APO cleanup (direct SS3Config / FxProperties deletion)"
 
@@ -202,10 +252,10 @@ $ss3Subkeys = @('PlaybackSS3Config', 'RecordSS3Config')
 # Known Sonic Studio 3 / Nahimic APO property-key GUIDs stored as VALUE NAMES
 # under FxProperties / EP\N. Matching by name, not value (values are binary).
 $knownApoPropertyGuids = @(
-    '9B8844FE-1650-40E5-A5EA-11B8C83821A1',   # FX stream/mode APO refs
-    'F363DF17-A750-4AC3-B7B5-2BBEFFA9085F',   # FX mode APO refs
-    'E0F2C10F-8244-476E-8EBE-B6EE73D8F2FB',   # APO notification CLSID
-    'D3465FC4-DB6D-4796-8FDE-0CB851BE2EC9'    # APO UI CLSID
+    '9B8844FE-1650-40E5-A5EA-11B8C83821A1',  # FX stream/mode APO refs
+    'F363DF17-A750-4AC3-B7B5-2BBEFFA9085F',  # FX mode APO refs
+    'E0F2C10F-8244-476E-8EBE-B6EE73D8F2FB',  # APO notification CLSID
+    'D3465FC4-DB6D-4796-8FDE-0CB851BE2EC9'   # APO UI CLSID
 )
 # Build a regex that matches any property name starting with one of these GUIDs
 $apoGuidPattern = '(?i)^\{(' + ($knownApoPropertyGuids -join '|') + ')\}'
@@ -284,6 +334,10 @@ Write-OK "Audio services restarted"
 
 # ----------------------------------------------------------------------------
 # 4. Driver Store: removal via pnputil
+#
+# At this point the device-install policy from section 0a is OFF, so
+# pnputil /delete-driver /uninstall /force can do its job without hitting
+# "The installation of this device is forbidden by system policy".
 # ----------------------------------------------------------------------------
 Write-Step "Removing drivers from Driver Store (pnputil)"
 
@@ -309,9 +363,18 @@ if ($infFiles.Count -eq 0) {
 } else {
     foreach ($inf in $infFiles) {
         Write-Host "    Force-removing: $inf" -ForegroundColor Yellow
-        pnputil /delete-driver $inf /uninstall /force 2>&1 |
-            ForEach-Object { Write-Host "      $_" -ForegroundColor DarkGray }
-        Write-OK "Driver $inf removed"
+        $pnpOut = pnputil /delete-driver $inf /uninstall /force 2>&1
+        $pnpOut | ForEach-Object { Write-Host "      $_" -ForegroundColor DarkGray }
+
+        # Defensive check: detect the policy-block error and bail out clearly
+        # if section 0a somehow didn't take effect (corporate GPO override etc.)
+        if ($pnpOut -match 'forbidden by system policy') {
+            Write-Warn "Driver $inf still blocked by an external policy."
+            Write-Warn "Check HKLM\SOFTWARE\Policies\Microsoft\Windows\DeviceInstall"
+            Write-Warn "and any domain-pushed Group Policy, then re-run this script."
+        } else {
+            Write-OK "Driver $inf removed"
+        }
     }
 }
 
@@ -319,7 +382,6 @@ if ($infFiles.Count -eq 0) {
 # 5. PnP devices: removal
 # ----------------------------------------------------------------------------
 Write-Step "Removing PnP devices"
-
 Get-PnpDevice -ErrorAction SilentlyContinue |
     Where-Object { $_.FriendlyName -match $TARGET } |
     ForEach-Object {
@@ -360,8 +422,10 @@ $paths = @(
 function Remove-Forced {
     param([string]$Path)
     if (-not (Test-Path $Path)) { Write-Skipped $Path; return }
-    & takeown /f $Path /r /a /d y 2>&1 | Out-Null
-    & icacls $Path /grant "Administrators:F" /t 2>&1 | Out-Null
+
+    & takeown /f $Path /r /a /d y                  2>&1 | Out-Null
+    & icacls  $Path /grant "Administrators:F" /t   2>&1 | Out-Null
+
     try {
         Remove-Item -Path $Path -Recurse -Force -ErrorAction Stop
         Write-OK "Removed: $Path"
@@ -396,7 +460,6 @@ foreach ($dir in @("$env:SystemRoot\System32", "$env:SystemRoot\SysWOW64")) {
 # 7. Task Scheduler: remove matching tasks
 # ----------------------------------------------------------------------------
 Write-Step "Removing scheduled tasks"
-
 $found = $false
 Get-ScheduledTask -ErrorAction SilentlyContinue |
     Where-Object { $_.TaskName -match $TARGET -or $_.TaskPath -match $TARGET } |
@@ -409,11 +472,10 @@ if (-not $found) { Write-Skipped "No matching scheduled tasks" }
 
 # ----------------------------------------------------------------------------
 # 8. Windows Update: hide pending updates via WUA COM API
-#    Equivalent to the "Hide" button in Windows Update MiniTool, fully
-#    automated with no GUI required.
+# Equivalent to the "Hide" button in Windows Update MiniTool, fully
+# automated with no GUI required.
 # ----------------------------------------------------------------------------
 Write-Step "Hiding pending Windows Update entries"
-
 $wuSearcher = $null
 try {
     $wuSession  = New-Object -ComObject Microsoft.Update.Session
@@ -444,13 +506,17 @@ try {
 
 # ----------------------------------------------------------------------------
 # 9. Hardware ID blacklist — permanent block via Group Policy registry
+#
+# This RE-ENABLES the policy that section 0a turned off. By doing it here,
+# after drivers have already been removed, we get the best of both worlds:
+# clean uninstall now + permanent block against future reinstall.
 # ----------------------------------------------------------------------------
 Write-Step "Blacklisting Hardware IDs (permanent block)"
 
 $hwIdRegPath  = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\DeviceInstall\Restrictions'
 $denyListPath = "$hwIdRegPath\DenyDeviceIDs"
 
-if (-not (Test-Path $hwIdRegPath)) { New-Item -Path $hwIdRegPath -Force | Out-Null }
+if (-not (Test-Path $hwIdRegPath))  { New-Item -Path $hwIdRegPath  -Force | Out-Null }
 Set-ItemProperty -Path $hwIdRegPath -Name 'DenyDeviceIDs'            -Value 1 -Type DWord -Force
 Set-ItemProperty -Path $hwIdRegPath -Name 'DenyDeviceIDsRetroactive' -Value 1 -Type DWord -Force
 if (-not (Test-Path $denyListPath)) { New-Item -Path $denyListPath -Force | Out-Null }
@@ -497,7 +563,6 @@ $existingValues = @{}
 }
 
 $counter = if ($existingValues.Count -gt 0) { $existingValues.Count + 1 } else { 1 }
-
 foreach ($hwId in $allHwIds) {
     if ($existingValues.ContainsKey($hwId)) {
         Write-Host "    [=] Already present: $hwId" -ForegroundColor DarkGray
@@ -509,31 +574,36 @@ foreach ($hwId in $allHwIds) {
     $existingValues[$hwId] = $true
 }
 
+# Refresh policy so the blacklist takes effect immediately
+& gpupdate.exe /force /target:computer 2>&1 | Out-Null
+
 # ----------------------------------------------------------------------------
 # 10. Scheduled task: NahimicPolicyGuard
-#     Re-applies the HW ID blacklist at every startup as SYSTEM.
-#     Protects against Windows feature updates that can reset Group Policy
-#     registry keys under HKLM\SOFTWARE\Policies\...
+# Re-applies the HW ID blacklist at every startup as SYSTEM.
+# Protects against Windows feature updates that can reset Group Policy
+# registry keys under HKLM\SOFTWARE\Policies\...
 # ----------------------------------------------------------------------------
 Write-Step "Creating NahimicPolicyGuard scheduled task"
 
 $guardTaskName = 'NahimicPolicyGuard'
 
-# Remove stale version if present (idempotent re-run)
+# Remove stale version if present (idempotent re-run). We use Unregister rather
+# than just re-enabling the disabled task from section 0a so the embedded
+# script body is always refreshed to the latest version.
 Unregister-ScheduledTask -TaskName $guardTaskName -Confirm:$false -ErrorAction SilentlyContinue
 
 $guardScript = @'
 $hwIdRegPath  = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\DeviceInstall\Restrictions'
 $denyListPath = "$hwIdRegPath\DenyDeviceIDs"
-if (-not (Test-Path $hwIdRegPath)) { New-Item -Path $hwIdRegPath -Force | Out-Null }
+if (-not (Test-Path $hwIdRegPath))  { New-Item -Path $hwIdRegPath  -Force | Out-Null }
 Set-ItemProperty -Path $hwIdRegPath -Name 'DenyDeviceIDs'            -Value 1 -Type DWord -Force
 Set-ItemProperty -Path $hwIdRegPath -Name 'DenyDeviceIDsRetroactive' -Value 1 -Type DWord -Force
 if (-not (Test-Path $denyListPath)) { New-Item -Path $denyListPath -Force | Out-Null }
 $ids = @(
     'SWC\VEN_103C&AID_NAHIMIC', 'SWC\VEN_1462&AID_NAHIMIC',
     'SWC\VEN_10DE&AID_NAHIMIC', 'SWC\VEN_1043&AID_NAHIMIC',
-    'ROOT\NAHIMIC_MIRRORING',   'ROOT\NahimicBTLink',
-    'ROOT\Nahimic_Mirroring',   'ROOT\NahimicXVAD',
+    'ROOT\NAHIMIC_MIRRORING',  'ROOT\NahimicBTLink',
+    'ROOT\Nahimic_Mirroring',  'ROOT\NahimicXVAD',
     'SWC\VEN_1043&AID_SONICSTUDIO', 'ROOT\SONICSTUDIO', 'ROOT\ASTUDIO'
 )
 $existing = @{}
@@ -550,14 +620,13 @@ foreach ($id in $ids) {
 }
 '@
 
-$encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($guardScript))
-
-$action    = New-ScheduledTaskAction -Execute 'powershell.exe' `
-                 -Argument "-NonInteractive -NoProfile -WindowStyle Hidden -EncodedCommand $encoded"
-$trigger   = New-ScheduledTaskTrigger -AtStartup
+$encoded   = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($guardScript))
+$action    = New-ScheduledTaskAction    -Execute 'powershell.exe' `
+                  -Argument "-NonInteractive -NoProfile -WindowStyle Hidden -EncodedCommand $encoded"
+$trigger   = New-ScheduledTaskTrigger   -AtStartup
 $principal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
 $settings  = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Minutes 5) `
-                 -MultipleInstances IgnoreNew
+                  -MultipleInstances IgnoreNew
 
 try {
     Register-ScheduledTask -TaskName $guardTaskName -Action $action -Trigger $trigger `
@@ -576,6 +645,7 @@ $line = "─" * 62
 Write-Host "`n$line" -ForegroundColor DarkGray
 Write-Host " Removal complete: Nahimic / A-Volute / Sonic Studio / A-Studio" -ForegroundColor Green
 Write-Host " Actions performed:" -ForegroundColor White
+Write-Host "   - Pre-cleanup: existing device install restrictions cleared" -ForegroundColor White
 Write-Host "   - Win32 apps uninstalled (UninstallString)" -ForegroundColor White
 Write-Host "   - AppX / Store packages removed" -ForegroundColor White
 Write-Host "   - Services stopped and removed" -ForegroundColor White
@@ -587,7 +657,7 @@ Write-Host "   - PnP devices removed" -ForegroundColor White
 Write-Host "   - Leftover files deleted (takeown + ACL deny fallback)" -ForegroundColor White
 Write-Host "   - Scheduled tasks removed" -ForegroundColor White
 Write-Host "   - Windows Update entries hidden (WUA COM API)" -ForegroundColor White
-Write-Host "   - Hardware IDs blacklisted (permanent block)" -ForegroundColor White
+Write-Host "   - Hardware IDs blacklisted (permanent block, re-applied)" -ForegroundColor White
 Write-Host "   - NahimicPolicyGuard task created (survives feature updates)" -ForegroundColor White
 Write-Host "$line" -ForegroundColor DarkGray
 
