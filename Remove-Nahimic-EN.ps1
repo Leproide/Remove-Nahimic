@@ -33,7 +33,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'SilentlyContinue'
 
 # ----------------------------------------------------------------------------
-# Central pattern — add terms here to extend the cleanup scope
+# Central pattern - add terms here to extend the cleanup scope
 # ----------------------------------------------------------------------------
 $TARGET = 'Nahimic|A[-_ ]Volute|NhNotif|\bA[-_ ]?Studio\b|Sonic[-_ ]?Studio|SonicSuite|NahimicAPO'
 
@@ -43,13 +43,13 @@ function Write-Warn    { param([string]$T); Write-Host "    [!] $T" -ForegroundC
 function Write-Skipped { param([string]$T); Write-Host "    [-] $T (not found, skipping)" -ForegroundColor DarkGray }
 
 # ----------------------------------------------------------------------------
-# 0a. PRE-CLEANUP — disable any pre-existing Device Installation Restrictions
+# 0a. PRE-CLEANUP - disable any pre-existing Device Installation Restrictions
 #
 # If the script (or just its blacklist section) was run previously, the policy
 # at HKLM\SOFTWARE\Policies\Microsoft\Windows\DeviceInstall\Restrictions and
 # the NahimicPolicyGuard scheduled task may already be active. With
 # DenyDeviceIDsRetroactive=1 Windows blocks ALL operations on devices whose
-# Hardware IDs match the deny list — including pnputil /delete-driver, which
+# Hardware IDs match the deny list - including pnputil /delete-driver, which
 # fails with: "The installation of this device is forbidden by system policy."
 #
 # We disable both BEFORE touching drivers, then section 9/10 re-apply them at
@@ -232,12 +232,12 @@ foreach ($key in $regKeys) {
 }
 
 # ----------------------------------------------------------------------------
-# 3b. APO cleanup — direct deletion of SS3Config / FxProperties subkeys
+# 3b. APO cleanup - direct deletion of SS3Config / FxProperties subkeys
 #
 # PlaybackSS3Config and RecordSS3Config are Sonic Studio 3 config blobs.
 # Their values are binary PROPVARIANTs whose .ToString() is "System.Byte[]",
 # so string/regex matching on values is unreliable. We delete the entire
-# subkey instead — if SS3/Nahimic is gone, these are orphaned garbage.
+# subkey instead - if SS3/Nahimic is gone, these are orphaned garbage.
 # FxProperties is also cleaned for any properties whose NAME matches the
 # known Sonic/Nahimic APO property-key GUIDs.
 # ----------------------------------------------------------------------------
@@ -246,7 +246,7 @@ Write-Step "APO cleanup (direct SS3Config / FxProperties deletion)"
 $audioClassKey    = 'HKLM:\SYSTEM\CurrentControlSet\Control\Class\{4d36e96c-e325-11ce-bfc1-08002be10318}'
 $audioClassKeyRaw = 'HKLM\SYSTEM\CurrentControlSet\Control\Class\{4d36e96c-e325-11ce-bfc1-08002be10318}'
 
-# Subkeys that are exclusively Sonic Studio 3 / Nahimic — delete entire key
+# Subkeys that are exclusively Sonic Studio 3 / Nahimic - delete entire key
 $ss3Subkeys = @('PlaybackSS3Config', 'RecordSS3Config')
 
 # Known Sonic Studio 3 / Nahimic APO property-key GUIDs stored as VALUE NAMES
@@ -430,7 +430,7 @@ function Remove-Forced {
         Remove-Item -Path $Path -Recurse -Force -ErrorAction Stop
         Write-OK "Removed: $Path"
     } catch {
-        Write-Warn "Could not delete (locked?) — applying ACL deny: $Path"
+        Write-Warn "Could not delete (locked?) - applying ACL deny: $Path"
         try {
             $acl = Get-Acl $Path
             $deny = New-Object System.Security.AccessControl.FileSystemAccessRule(
@@ -442,7 +442,7 @@ function Remove-Forced {
             Set-Acl $Path $acl
             Write-OK "ACL deny applied (file inert): $Path"
         } catch {
-            Write-Warn "ACL deny also failed: $Path — $_"
+            Write-Warn "ACL deny also failed: $Path - $_"
         }
     }
 }
@@ -505,7 +505,7 @@ try {
 }
 
 # ----------------------------------------------------------------------------
-# 9. Hardware ID blacklist — permanent block via Group Policy registry
+# 9. Hardware ID blacklist - permanent block via Group Policy registry
 #
 # This RE-ENABLES the policy that section 0a turned off. By doing it here,
 # after drivers have already been removed, we get the best of both worlds:
@@ -641,7 +641,7 @@ try {
 # ----------------------------------------------------------------------------
 # 11. Summary
 # ----------------------------------------------------------------------------
-$line = "─" * 62
+$line = "-" * 62
 Write-Host "`n$line" -ForegroundColor DarkGray
 Write-Host " Removal complete: Nahimic / A-Volute / Sonic Studio / A-Studio" -ForegroundColor Green
 Write-Host " Actions performed:" -ForegroundColor White

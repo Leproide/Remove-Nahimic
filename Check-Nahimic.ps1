@@ -9,7 +9,7 @@ Repo: https://github.com/Leproide/Remove-Nahimic
     exit 0 = something found  (removal script needed)
     exit 1 = nothing found    (system is clean)
 .NOTES
-    Read-only — does not modify anything.
+    Read-only - does not modify anything.
 #>
 
 Set-StrictMode -Version Latest
@@ -24,7 +24,7 @@ $APO_TARGET = 'Nahimic|A[-_ ]Volute|NahimicAPO|NhNotif'
 $hits = [System.Collections.Generic.List[string]]::new()
 function Add-Hit { param([string]$Text) if ($Text -and -not $hits.Contains($Text)) { $hits.Add($Text) | Out-Null } }
 
-# ── 1. Win32 uninstall entries ────────────────────────────────────────────────
+# -- 1. Win32 uninstall entries ------------------------------------------------
 foreach ($root in @(
     'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*',
     'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*',
@@ -34,7 +34,7 @@ foreach ($root in @(
         ForEach-Object { Add-Hit "Win32 app:       $($_.DisplayName)" }
 }
 
-# ── 2. AppX / Store packages ──────────────────────────────────────────────────
+# -- 2. AppX / Store packages --------------------------------------------------
 Get-AppxPackage -AllUsers -ErrorAction SilentlyContinue |
     Where-Object { $_.Name -match $TARGET -or $_.PackageFullName -match $TARGET } |
     ForEach-Object { Add-Hit "AppX package:    $($_.Name)" }
@@ -43,13 +43,13 @@ Get-AppxProvisionedPackage -Online -ErrorAction SilentlyContinue |
     Where-Object { $_.DisplayName -match $TARGET -or $_.PackageName -match $TARGET } |
     ForEach-Object { Add-Hit "Provisioned AppX: $($_.DisplayName)" }
 
-# ── 3. Services ───────────────────────────────────────────────────────────────
+# -- 3. Services ---------------------------------------------------------------
 foreach ($p in @('NahimicService','Nahimic_Mirroring','AVolute*','SonicSuite*','ASSonicStudio*','ASonicStudio*')) {
     Get-Service -Name $p -ErrorAction SilentlyContinue |
         ForEach-Object { Add-Hit "Service:         $($_.Name) [$($_.Status)]" }
 }
 
-# ── 4. Running processes ──────────────────────────────────────────────────────
+# -- 4. Running processes ------------------------------------------------------
 foreach ($p in @('NahimicSvc*','NahimicService*','A-Volute*','AVS*','NhNotifSys*',
                  'MSICenter*','MSI*Dragon*','DragonCenter*','OneDragonCenter*',
                  'SonicStudio*','SonicSuite*','ASSonicStudio*','ASonicStudio*','A-Studio*','AStudio*')) {
@@ -57,7 +57,7 @@ foreach ($p in @('NahimicSvc*','NahimicService*','A-Volute*','AVS*','NhNotifSys*
         ForEach-Object { Add-Hit "Process:         $($_.Name) (PID $($_.Id))" }
 }
 
-# ── 5. Known registry keys ────────────────────────────────────────────────────
+# -- 5. Known registry keys ----------------------------------------------------
 foreach ($key in @(
     'HKLM:\SYSTEM\CurrentControlSet\Services\NahimicService',
     'HKLM:\SYSTEM\CurrentControlSet\Services\Nahimic_Mirroring',
@@ -74,7 +74,7 @@ foreach ($key in @(
     if (Test-Path $key) { Add-Hit "Registry key:    $key" }
 }
 
-# ── 6. APO: SS3Config subkeys (Sonic Studio 3 blobs) ─────────────────────────
+# -- 6. APO: SS3Config subkeys (Sonic Studio 3 blobs) -------------------------
 $audioClassKey = 'HKLM:\SYSTEM\CurrentControlSet\Control\Class\{4d36e96c-e325-11ce-bfc1-08002be10318}'
 if (Test-Path $audioClassKey) {
     Get-ChildItem -Path $audioClassKey -ErrorAction SilentlyContinue |
@@ -102,7 +102,7 @@ if (Test-Path $audioClassKey) {
         }
 }
 
-# ── 7. HKCR AudioProcessingObjects ───────────────────────────────────────────
+# -- 7. HKCR AudioProcessingObjects -------------------------------------------
 # Uses $APO_TARGET (narrow) instead of $TARGET to avoid false positives on
 # third-party APOs (Conexant CVHT, Waves, SRS, etc.) whose FriendlyName or
 # Copyright may contain generic words like "Studio" matched by $TARGET.
@@ -118,7 +118,7 @@ foreach ($ar in @('HKLM:\SOFTWARE\Classes\AudioEngine\AudioProcessingObjects',
     }
 }
 
-# ── 8. Driver Store ───────────────────────────────────────────────────────────
+# -- 8. Driver Store -----------------------------------------------------------
 $driverList = pnputil /enum-drivers 2>&1
 $currentInf = $null
 foreach ($line in $driverList) {
@@ -130,12 +130,12 @@ foreach ($line in $driverList) {
     }
 }
 
-# ── 9. PnP devices ────────────────────────────────────────────────────────────
+# -- 9. PnP devices ------------------------------------------------------------
 Get-PnpDevice -ErrorAction SilentlyContinue |
     Where-Object { $_.FriendlyName -match $TARGET -or $_.InstanceId -match $TARGET } |
     ForEach-Object { Add-Hit "PnP device:      $($_.FriendlyName) [$($_.InstanceId)]" }
 
-# ── 10. Residual files / folders ──────────────────────────────────────────────
+# -- 10. Residual files / folders ----------------------------------------------
 foreach ($p in @(
     "$env:SystemRoot\System32\A-Volute",
     "$env:SystemRoot\System32\NahimicService.exe",
@@ -156,14 +156,14 @@ foreach ($p in @(
     if (Test-Path $p) { Add-Hit "File/Folder:     $p" }
 }
 
-# ── 11. Scheduled tasks ───────────────────────────────────────────────────────
-# Exclude NahimicPolicyGuard — created by the removal script itself, not by Nahimic.
+# -- 11. Scheduled tasks -------------------------------------------------------
+# Exclude NahimicPolicyGuard - created by the removal script itself, not by Nahimic.
 Get-ScheduledTask -ErrorAction SilentlyContinue |
     Where-Object { ($_.TaskName -match $TARGET -or $_.TaskPath -match $TARGET) -and
                    $_.TaskName -ne 'NahimicPolicyGuard' } |
     ForEach-Object { Add-Hit "Scheduled task:  $($_.TaskPath)$($_.TaskName)" }
 
-# ── Result ────────────────────────────────────────────────────────────────────
+# -- Result --------------------------------------------------------------------
 $logFile = "C:\Windows\Temp\Check-Nahimic.log"
 
 if ($hits.Count -gt 0) {
@@ -181,7 +181,7 @@ if ($hits.Count -gt 0) {
     exit 0
 } else {
     Write-Output ""
-    Write-Output "Nahimic not present — system is clean."
+    Write-Output "Nahimic not present - system is clean."
     Write-Output ""
     "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') - Clean" | Out-File -FilePath $logFile -Encoding UTF8 -Force
     exit 1

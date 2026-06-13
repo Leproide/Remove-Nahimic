@@ -41,13 +41,13 @@ function Write-Warn    { param([string]$T); Write-Host "    [!] $T" -ForegroundC
 function Write-Skipped { param([string]$T); Write-Host "    [-] $T (non trovato, skip)" -ForegroundColor DarkGray }
 
 # ----------------------------------------------------------------------------
-# 0a. PRE-CLEANUP — disattiva eventuali Device Installation Restrictions
+# 0a. PRE-CLEANUP - disattiva eventuali Device Installation Restrictions
 #
 # Se lo script (o solo la sezione blacklist) e' stato eseguito in precedenza,
 # la policy in HKLM\SOFTWARE\Policies\Microsoft\Windows\DeviceInstall\Restrictions
 # e il task NahimicPolicyGuard potrebbero essere gia' attivi. Con
 # DenyDeviceIDsRetroactive=1 Windows blocca TUTTE le operazioni sui device
-# i cui Hardware ID matchano la deny list — inclusi pnputil /delete-driver,
+# i cui Hardware ID matchano la deny list - inclusi pnputil /delete-driver,
 # che fallisce con: "L'installazione del dispositivo non e' consentita dai
 # criteri di sistema". Disattiviamo tutto PRIMA di toccare i driver; la
 # sezione 9/10 ri-applica policy e task alla fine.
@@ -190,7 +190,7 @@ foreach ($key in $regKeys) {
 }
 
 # ----------------------------------------------------------------------------
-# 3b. Pulizia APO diretta — SS3Config / FxProperties
+# 3b. Pulizia APO diretta - SS3Config / FxProperties
 #
 # I valori sotto PlaybackSS3Config / RecordSS3Config sono PROPVARIANT
 # binari: .ToString() restituisce "System.Byte[]", quindi il pattern
@@ -360,7 +360,7 @@ function Remove-Forced {
         Remove-Item -Path $Path -Recurse -Force -ErrorAction Stop
         Write-OK "Rimosso: $Path"
     } catch {
-        Write-Warn "Non cancellabile (bloccato?) — applico ACL deny: $Path"
+        Write-Warn "Non cancellabile (bloccato?) - applico ACL deny: $Path"
         try {
             $acl = Get-Acl $Path
             $deny       = New-Object System.Security.AccessControl.FileSystemAccessRule('Everyone', 'FullControl', 'Deny')
@@ -369,7 +369,7 @@ function Remove-Forced {
             $acl.SetAccessRule($denySystem)
             Set-Acl $Path $acl
             Write-OK "ACL deny applicato (file inerte): $Path"
-        } catch { Write-Warn "ACL deny fallito: $Path — $_" }
+        } catch { Write-Warn "ACL deny fallito: $Path - $_" }
     }
 }
 
@@ -538,7 +538,7 @@ try {
 # ----------------------------------------------------------------------------
 # 11. Riepilogo
 # ----------------------------------------------------------------------------
-$line = "─" * 62
+$line = "-" * 62
 Write-Host "`n$line" -ForegroundColor DarkGray
 Write-Host " Rimozione completata: Nahimic / A-Volute / Sonic Studio / A-Studio" -ForegroundColor Green
 Write-Host " Azioni eseguite:" -ForegroundColor White
