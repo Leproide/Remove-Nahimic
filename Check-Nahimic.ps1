@@ -1,28 +1,65 @@
 <#
-Author: Leprechaun
-Repo: https://github.com/Leproide/Remove-Nahimic
+    Check-Nahimic.ps1
 
-.SYNOPSIS
-    Pre-check: detects Nahimic / A-Volute / Sonic Studio / A-Studio remnants.
-.DESCRIPTION
-    Run this BEFORE the removal script to see exactly what will be cleaned.
-    exit 0 = something found  (removal script needed)
-    exit 1 = nothing found    (system is clean)
-.NOTES
-    Read-only - does not modify anything.
+    Pre-check / audit: detects Nahimic / A-Volute / Sonic Studio / A-Studio
+    remnants, plus any device-install block left behind by the removal script.
+
+    Author: https://github.com/Leproide
+    Repo:   https://github.com/Leproide/Remove-Nahimic
+
+    This program is free software: you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+    .SYNOPSIS
+    Read-only detection of Nahimic/Sonic remnants and of the HW-ID deny policy.
+
+    .DESCRIPTION
+    Run this BEFORE (or after) the removal script to see what is present.
+    Read-only: it does NOT modify anything.
+
+    Exit codes (STANDARD shell convention - inverted vs the old script):
+        exit 0 = clean          (nothing found)        -> success/true
+        exit 2 = remnants found  (run Remove-Nahimic.ps1)
+        exit 3 = system is clean of Nahimic BUT a device-install block is
+                 active (DenyDeviceIDs / NahimicPolicyGuard) - may be blocking
+                 real hardware; see README "Recovery".
+
+    .NOTES
+    Driver Store detection uses Win32_PnPSignedDriver (CIM, locale-invariant),
+    with a bilingual pnputil text fallback - the old 'Published Name' /
+    'Provider Name' parse silently matched nothing on non-English Windows.
 #>
 
-Set-StrictMode -Version Latest
-$ErrorActionPreference = 'SilentlyContinue'
+[CmdletBinding()]
+param()
 
+Set-StrictMode -Version Latest
+# Not SilentlyContinue globally: a failing probe must not read as "clean".
+$ErrorActionPreference = 'Continue'
+
+# Broad pattern for structured fields (DisplayName, service/key names, paths).
 $TARGET = 'Nahimic|A[-_ ]Volute|NhNotif|\bA[-_ ]?Studio\b|Sonic[-_ ]?Studio|SonicSuite|NahimicAPO'
 
 # Narrow pattern for free-text fields (FriendlyName, Copyright) where broad
-# terms like "Studio" would cause false positives on third-party APOs.
+# terms like "Studio" would cause false positives on third-party APOs
+# (Conexant CVHT, Waves, SRS, etc.).
 $APO_TARGET = 'Nahimic|A[-_ ]Volute|NahimicAPO|NhNotif'
 
-$hits = [System.Collections.Generic.List[string]]::new()
-function Add-Hit { param([string]$Text) if ($Text -and -not $hits.Contains($Text)) { $hits.Add($Text) | Out-Null } }
+$hits    = [System.Collections.Generic.List[string]]::new()
+$blocks  = [System.Collections.Generic.List[string]]::new()
+
+function Add-Hit   { param([string]$Text) if ($Text -and -not $hits.Contains($Text))   { $hits.Add($Text)   | Out-Null } }
+function Add-Block { param([string]$Text) if ($Text -and -not $blocks.Contains($Text)) { $blocks.Add($Text) | Out-Null } }
 
 # -- 1. Win32 uninstall entries ------------------------------------------------
 foreach ($root in @(
@@ -30,14 +67,14 @@ foreach ($root in @(
     'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*',
     'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*')) {
     Get-ItemProperty $root -ErrorAction SilentlyContinue |
-        Where-Object { $_.DisplayName -match $TARGET } |
-        ForEach-Object { Add-Hit "Win32 app:       $($_.DisplayName)" }
+        Where-Object { $_.PSObject.Properties['DisplayName'] -and $_.DisplayName -match $TARGET } |
+        ForEach-Object { Add-Hit "Win32 app:        $($_.DisplayName)" }
 }
 
 # -- 2. AppX / Store packages --------------------------------------------------
 Get-AppxPackage -AllUsers -ErrorAction SilentlyContinue |
     Where-Object { $_.Name -match $TARGET -or $_.PackageFullName -match $TARGET } |
-    ForEach-Object { Add-Hit "AppX package:    $($_.Name)" }
+    ForEach-Object { Add-Hit "AppX package:     $($_.Name)" }
 
 Get-AppxProvisionedPackage -Online -ErrorAction SilentlyContinue |
     Where-Object { $_.DisplayName -match $TARGET -or $_.PackageName -match $TARGET } |
@@ -46,7 +83,7 @@ Get-AppxProvisionedPackage -Online -ErrorAction SilentlyContinue |
 # -- 3. Services ---------------------------------------------------------------
 foreach ($p in @('NahimicService','Nahimic_Mirroring','AVolute*','SonicSuite*','ASSonicStudio*','ASonicStudio*')) {
     Get-Service -Name $p -ErrorAction SilentlyContinue |
-        ForEach-Object { Add-Hit "Service:         $($_.Name) [$($_.Status)]" }
+        ForEach-Object { Add-Hit "Service:          $($_.Name) [$($_.Status)]" }
 }
 
 # -- 4. Running processes ------------------------------------------------------
@@ -54,7 +91,7 @@ foreach ($p in @('NahimicSvc*','NahimicService*','A-Volute*','AVS*','NhNotifSys*
                  'MSICenter*','MSI*Dragon*','DragonCenter*','OneDragonCenter*',
                  'SonicStudio*','SonicSuite*','ASSonicStudio*','ASonicStudio*','A-Studio*','AStudio*')) {
     Get-Process -Name $p -ErrorAction SilentlyContinue |
-        ForEach-Object { Add-Hit "Process:         $($_.Name) (PID $($_.Id))" }
+        ForEach-Object { Add-Hit "Process:          $($_.Name) (PID $($_.Id))" }
 }
 
 # -- 5. Known registry keys ----------------------------------------------------
@@ -71,7 +108,7 @@ foreach ($key in @(
     'HKLM:\SOFTWARE\ASUS\A-Studio',
     'HKCU:\SOFTWARE\ASUS\A-Studio',
     'HKLM:\SOFTWARE\ASUSTeK Computer Inc.\ASUS Sonic Studio')) {
-    if (Test-Path $key) { Add-Hit "Registry key:    $key" }
+    if (Test-Path $key) { Add-Hit "Registry key:     $key" }
 }
 
 # -- 6. APO: SS3Config subkeys (Sonic Studio 3 blobs) -------------------------
@@ -85,7 +122,7 @@ if (Test-Path $audioClassKey) {
             foreach ($ss3 in @('PlaybackSS3Config','RecordSS3Config')) {
                 $ss3Path = Join-Path $devPath "InterfaceSetting\$ss3"
                 if (Test-Path $ss3Path) {
-                    Add-Hit "APO SS3Config:   $devIndex\InterfaceSetting\$ss3"
+                    Add-Hit "APO SS3Config:    $devIndex\InterfaceSetting\$ss3"
                 }
             }
             # FxProperties: check by property NAME (values are binary PROPVARIANTs)
@@ -96,16 +133,13 @@ if (Test-Path $audioClassKey) {
                 if ($props) {
                     $props.PSObject.Properties |
                         Where-Object { $_.Name -notlike 'PS*' -and $_.Name -match "(?i)^\{($knownGuids)\}" } |
-                        ForEach-Object { Add-Hit "APO FxProperty:  $devIndex \ $($_.Name)" }
+                        ForEach-Object { Add-Hit "APO FxProperty:   $devIndex \ $($_.Name)" }
                 }
             }
         }
 }
 
-# -- 7. HKCR AudioProcessingObjects -------------------------------------------
-# Uses $APO_TARGET (narrow) instead of $TARGET to avoid false positives on
-# third-party APOs (Conexant CVHT, Waves, SRS, etc.) whose FriendlyName or
-# Copyright may contain generic words like "Studio" matched by $TARGET.
+# -- 7. HKCR AudioProcessingObjects (narrow $APO_TARGET to avoid false pos.) ---
 foreach ($ar in @('HKLM:\SOFTWARE\Classes\AudioEngine\AudioProcessingObjects',
                   'HKLM:\SOFTWARE\Classes\WOW6432Node\AudioEngine\AudioProcessingObjects')) {
     if (-not (Test-Path $ar)) { continue }
@@ -118,22 +152,53 @@ foreach ($ar in @('HKLM:\SOFTWARE\Classes\AudioEngine\AudioProcessingObjects',
     }
 }
 
-# -- 8. Driver Store -----------------------------------------------------------
-$driverList = pnputil /enum-drivers 2>&1
+# -- 8. Driver Store (CIM primary, bilingual pnputil fallback) -----------------
+# OLD BUG: parsed localized pnputil output ('Published Name'/'Provider Name'),
+# so nothing matched on non-English Windows. CIM property names are invariant.
+$infSeen = New-Object System.Collections.Generic.HashSet[string]
+
+try {
+    Get-CimInstance -ClassName Win32_PnPSignedDriver -ErrorAction Stop |
+        Where-Object {
+            ($_.DeviceName         -and $_.DeviceName         -match $TARGET) -or
+            ($_.DriverProviderName -and $_.DriverProviderName -match $TARGET) -or
+            ($_.FriendlyName       -and $_.FriendlyName       -match $TARGET) -or
+            ($_.InfName            -and $_.InfName            -match $TARGET)
+        } |
+        ForEach-Object {
+            if ($_.InfName -and $_.InfName -match '^(oem\d+\.inf)$') {
+                if ($infSeen.Add($Matches[1])) { Add-Hit "Driver Store:     $($Matches[1])" }
+            }
+        }
+} catch {
+    Add-Hit "Driver Store:     (CIM query failed: $_)"
+}
+
+# Fallback: pnputil, matching both EN and IT field labels.
+$pnputilFieldRegex = 'Published Name|Nome pubblicato'
+$providerRegex     = 'Provider Name|Nome provider|Fornitore'
+$originalRegex     = 'Original Name|Nome originale'
+
+$driverList = & pnputil /enum-drivers 2>&1
 $currentInf = $null
 foreach ($line in $driverList) {
-    if ($line -match 'Published Name\s*:\s*(oem\d+\.inf)') { $currentInf = $Matches[1] }
-    if ($currentInf -and ($line -match "Provider Name\s*:\s*($TARGET)" -or
-                          $line -match "Original Name\s*:\s*\S*($TARGET)\S*")) {
-        Add-Hit "Driver Store:    $currentInf"
-        $currentInf = $null
+    if ($line -match "($pnputilFieldRegex)\s*:\s*(oem\d+\.inf)") {
+        $currentInf = $Matches[2]
+        continue
+    }
+    if ($currentInf) {
+        if ($line -match "($providerRegex)\s*:\s*.*($TARGET)" -or
+            $line -match "($originalRegex)\s*:\s*\S*($TARGET)\S*") {
+            if ($infSeen.Add($currentInf)) { Add-Hit "Driver Store:     $currentInf" }
+            $currentInf = $null
+        }
     }
 }
 
 # -- 9. PnP devices ------------------------------------------------------------
 Get-PnpDevice -ErrorAction SilentlyContinue |
     Where-Object { $_.FriendlyName -match $TARGET -or $_.InstanceId -match $TARGET } |
-    ForEach-Object { Add-Hit "PnP device:      $($_.FriendlyName) [$($_.InstanceId)]" }
+    ForEach-Object { Add-Hit "PnP device:       $($_.FriendlyName) [$($_.InstanceId)]" }
 
 # -- 10. Residual files / folders ----------------------------------------------
 foreach ($p in @(
@@ -153,36 +218,88 @@ foreach ($p in @(
     "$env:LOCALAPPDATA\ASUS\SonicStudio",
     "$env:APPDATA\ASUS\SonicStudio",
     "$env:ProgramData\ASUS\SonicStudio")) {
-    if (Test-Path $p) { Add-Hit "File/Folder:     $p" }
+    if (Test-Path $p) { Add-Hit "File/Folder:      $p" }
 }
 
-# -- 11. Scheduled tasks -------------------------------------------------------
-# Exclude NahimicPolicyGuard - created by the removal script itself, not by Nahimic.
+# -- 11. Scheduled tasks (Nahimic's own; guard task handled in section 12) ------
 Get-ScheduledTask -ErrorAction SilentlyContinue |
     Where-Object { ($_.TaskName -match $TARGET -or $_.TaskPath -match $TARGET) -and
                    $_.TaskName -ne 'NahimicPolicyGuard' } |
-    ForEach-Object { Add-Hit "Scheduled task:  $($_.TaskPath)$($_.TaskName)" }
+    ForEach-Object { Add-Hit "Scheduled task:   $($_.TaskPath)$($_.TaskName)" }
+
+# -- 12. Device-install block left by the removal script -----------------------
+# Not a Nahimic remnant: it's OUR deny policy. Report it separately because a
+# contaminated deny list (older bug) could be blocking real audio hardware.
+$restrictionsPath = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\DeviceInstall\Restrictions'
+$denyListPath     = "$restrictionsPath\DenyDeviceIDs"
+
+if (Test-Path $restrictionsPath) {
+    $deny     = (Get-ItemProperty -Path $restrictionsPath -Name 'DenyDeviceIDs'            -ErrorAction SilentlyContinue).DenyDeviceIDs
+    $denyRetro = (Get-ItemProperty -Path $restrictionsPath -Name 'DenyDeviceIDsRetroactive' -ErrorAction SilentlyContinue).DenyDeviceIDsRetroactive
+    if ($deny -eq 1) {
+        Add-Block "Device-install deny policy is ACTIVE (DenyDeviceIDs=1, Retroactive=$denyRetro)"
+    }
+    if (Test-Path $denyListPath) {
+        (Get-Item -Path $denyListPath -ErrorAction SilentlyContinue).Property | ForEach-Object {
+            $v = Get-ItemPropertyValue -Path $denyListPath -Name $_ -ErrorAction SilentlyContinue
+            if ($v) {
+                # Flag any entry that is NOT a Nahimic/Sonic software component -
+                # i.e. a real-hardware enumerator that must never be blocked.
+                if ($v -match '(?i)^(HDAUDIO|PCI|ACPI|USB|HID|SWD)\\') {
+                    Add-Block "DANGER: deny list contains a REAL-HARDWARE id: $v"
+                } else {
+                    Add-Block "Deny list entry: $v"
+                }
+            }
+        }
+    }
+}
+
+$guard = Get-ScheduledTask -TaskName 'NahimicPolicyGuard' -ErrorAction SilentlyContinue
+if ($guard) {
+    Add-Block "NahimicPolicyGuard task present (re-applies the deny list at startup)"
+}
 
 # -- Result --------------------------------------------------------------------
-$logFile = "C:\Windows\Temp\Check-Nahimic.log"
+$logFile = Join-Path $env:SystemRoot 'Temp\Check-Nahimic.log'
+$lines   = @()
 
 if ($hits.Count -gt 0) {
-    $lines = @()
     $lines += ""
     $lines += "WARNING: Nahimic / A-Volute / Sonic Studio detected ($($hits.Count) item(s)):"
     $lines += ""
     $hits | Sort-Object | ForEach-Object { $lines += "  - $_" }
     $lines += ""
     $lines += "Run Remove-Nahimic.ps1 as Administrator to clean up."
-
-    $lines | ForEach-Object { Write-Output $_ }
-    $lines | Out-File -FilePath $logFile -Encoding UTF8 -Force
-
-    exit 0
+    $exit = 2
+} elseif ($blocks.Count -gt 0) {
+    $lines += ""
+    $lines += "Nahimic not present, BUT a device-install block is active ($($blocks.Count) item(s)):"
+    $lines += ""
+    $blocks | Sort-Object | ForEach-Object { $lines += "  - $_" }
+    $lines += ""
+    $lines += "If real audio hardware is being blocked, see the README 'Recovery' section."
+    $exit = 3
 } else {
-    Write-Output ""
-    Write-Output "Nahimic not present - system is clean."
-    Write-Output ""
-    "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') - Clean" | Out-File -FilePath $logFile -Encoding UTF8 -Force
-    exit 1
+    $lines += ""
+    $lines += "Nahimic not present - system is clean."
+    $exit = 0
 }
+
+# Always append the block report when remnants were found too, so the deny
+# policy is visible even in the "remnants" case.
+if ($hits.Count -gt 0 -and $blocks.Count -gt 0) {
+    $lines += ""
+    $lines += "Device-install block also active:"
+    $blocks | Sort-Object | ForEach-Object { $lines += "  - $_" }
+}
+
+$lines | ForEach-Object { Write-Output $_ }
+try {
+    $header = "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') - exit $exit"
+    @($header) + $lines | Out-File -FilePath $logFile -Encoding UTF8 -Force
+} catch {
+    Write-Warning "Could not write log to $logFile : $_"
+}
+
+exit $exit
